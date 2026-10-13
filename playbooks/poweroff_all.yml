@@ -1,0 +1,201 @@
+---
+# playbooks/poweroff_all.yml
+#
+# Standalone "power everything off the same way" playbook - built for
+# a same-day power-down where there is no time to test the physical
+# iLO/IPMI path in playbooks/system_poweroff.yml (roles/system_poweroff/).
+# This one does NOT distinguish physical from virtual at all: every
+# host in the target group gets a plain SSH-driven `shutdown -h now`,
+# and every host is confirmed off the exact same way - a network
+# reachability check (SSH port stops answering) - regardless of
+# whether it happens to sit in [hpe_ilo_hosts] or not. No ipmitool, no
+# BMC/iLO credentials, no out-of-band calls anywhere in this file.
+#
+# This is a deliberate, narrower tool than system_poweroff.yml:
+#   - Weaker guarantee for physical hosts. A BMC-confirmed "Chassis
+#     Power is off" (system_poweroff.yml's verify_bmc.yml) proves the
+#     hardware is actually powered down. This playbook only proves the
+#     host stopped answering on a TCP port - the same best-effort
+#     signal system_poweroff.yml already uses for VMs. It is
+#     sufficient for "did this host go down", not for anything you'd
+#     stake a hands-on-hardware safety decision on (e.g. before
+#     physically removing a drive).
+#   - No BMC address capture step, so nothing here helps you power a
+#     physical host back on out-of-band either.
+# When you have time to validate ipmitool against your BMCs, prefer
+# system_poweroff.yml for hosts in [hpe_ilo_hosts] - it gives you the
+# stronger, hardware-confirmed guarantee for those. This playbook
+# remains useful afterwards too, for groups that are entirely virtual
+# or mixed and you just want one uniform path.
+#
+# Usage - same interactive/non-interactive target_hosts pattern as
+# system_poweroff.yml, and the same always-required confirmation gate:
+#
+#   1. Non-interactive (e.g. cron/AAP job templates):
+#
+#        ansible-playbook playbooks/poweroff_all.yml \
+#          -e target_hosts=lab \
+#          -e poweroff_all_confirm=true
+#
+#   2. Interactive (running it by hand at a terminal) - omit
+#      -e target_hosts=... and you'll be prompted for it:
+#
+#        ansible-playbook playbooks/poweroff_all.yml \
+#          -e poweroff_all_confirm=true
+#        Which inventory group or host(s) do you want to power off?
+#        (e.g. lab, or a comma-separated hostname list): _
+#
+# ALWAYS sanity-check the exact host list first with --list-hosts
+# before adding the confirm flag (only works with the -e form,
+# --list-hosts never runs the interactive prompt):
+#
+#   ansible-playbook playbooks/poweroff_all.yml \
+#     -e target_hosts=lab --list-hosts
+#
+# To re-run just the verification step against a host you already shut
+# down some other way, add -e poweroff_all_skip_shutdown=true.
+#
+# Hosts are processed one at a time by default (serial: 1), in the
+# exact order they appear in the inventory (Ansible's default play
+# host-order is inventory-file order, not alphabetical - same verified
+# behaviour system_poweroff.yml relies on). Override the batch size
+# with -e poweroff_all_serial=N if you understand the blast radius of
+# a bigger batch; inventory order still applies either way.
+
+- name: Power off every targeted host the same way and confirm over the network
+  hosts: "{{ target_hosts | mandatory }}"
+  become: true
+  gather_facts: true
+  serial: "{{ poweroff_all_serial | default(1) }}"
+
+  vars_prompt:
+    - name: target_hosts
+      prompt: >-
+        Which inventory group or host(s) do you want to power off?
+        (e.g. lab, or a comma-separated hostname list)
+      private: false
+
+  # No `vars:` block on purpose - `serial:` above is templated before
+  # play vars are merged into scope (confirmed empirically: a `vars:`
+  # default for poweroff_all_serial is NOT visible to `serial:` at
+  # parse time and errors as undefined). Every knob below instead uses
+  # an inline `| default(...)`, exactly like system_poweroff.yml/role
+  # already do, so -e overrides still work identically either way.
+
+  tasks:
+    - name: Refuse to run without the explicit confirmation gate
+      ansible.builtin.assert:
+        that:
+          - poweroff_all_confirm | default(false) | bool
+        fail_msg: >-
+          poweroff_all_confirm is false. This playbook shuts hosts
+          down - re-run with -e poweroff_all_confirm=true once you are
+          sure {{ inventory_hostname }} is one of the hosts you mean
+          to power off (sanity-check the full list first with
+          --list-hosts).
+        success_msg: "Confirmation gate passed for {{ inventory_hostname }}."
+
+    - name: Refuse to target this host if it IS the Ansible control node
+      ansible.builtin.assert:
+        that:
+          - poweroff_all_allow_control_node | default(false) | bool or (ansible_connection | default('')) != 'local'
+        fail_msg: >-
+          {{ inventory_hostname }} uses ansible_connection=local - it
+          looks like the Ansible control node itself. Powering it off
+          mid-play would cut this play off from under itself. Set
+          poweroff_all_allow_control_node: true if this is genuinely
+          intended.
+
+    - name: Refuse to target an unsupported OS
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] in (poweroff_all_allowed_distributions | default(['RedHat', 'OracleLinux']))
+          - ansible_facts['distribution_major_version'] | int in (poweroff_all_allowed_major_versions | default([7, 8, 9, 10]))
+        fail_msg: >-
+          {{ inventory_hostname }} is {{ ansible_facts['distribution'] }}
+          {{ ansible_facts['distribution_major_version'] }} - this
+          playbook only targets
+          {{ (poweroff_all_allowed_distributions | default(['RedHat', 'OracleLinux'])) | join('/') }}
+          {{ (poweroff_all_allowed_major_versions | default([7, 8, 9, 10])) | join('/') }}. Set
+          poweroff_all_skip_os_check: true to override.
+      when: not (poweroff_all_skip_os_check | default(false) | bool)
+
+    - name: Note that physical hosts get no BMC-verified power-off here
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} is in [hpe_ilo_hosts], but this
+          playbook intentionally never touches ipmitool/BMC - it will
+          only be confirmed off via network reachability, the same
+          best-effort check used for VMs. Use system_poweroff.yml
+          instead once you can validate the iLO/IPMI path, for a
+          hardware-confirmed guarantee on this host.
+      when: "'hpe_ilo_hosts' in group_names"
+
+    - name: Issue the graceful shutdown  # noqa: command-instead-of-module - systemd module has no poweroff/halt action
+      ansible.builtin.command: >-
+        systemctl poweroff --message='{{ poweroff_all_message | default("Shutdown initiated by Ansible (poweroff_all playbook)") }}'
+      become: true
+      async: 1
+      poll: 0
+      when: not (poweroff_all_skip_shutdown | default(false) | bool)
+      # async + poll:0 fires the command and moves on immediately,
+      # rather than waiting synchronously for a response that will
+      # never arrive cleanly - the SSH connection to this host dies
+      # mid-shutdown, which a synchronous call would otherwise report
+      # as a connection error. Plain `shutdown` binary, no extra
+      # collection dependency - same reasoning as system_poweroff.yml.
+
+    - name: Verify the host actually powered off
+      when: poweroff_all_verify_enabled | default(true) | bool
+      block:
+        - name: Wait for this host to stop answering on port {{ poweroff_all_network_check_port | default(22) }}
+          ansible.builtin.wait_for:
+            host: "{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}"
+            port: "{{ poweroff_all_network_check_port | default(22) }}"
+            state: stopped
+            timeout: "{{ poweroff_all_verify_timeout_seconds | default(300) }}"
+          # IMPORTANT: this task runs delegated, and under delegation
+          # `ansible_host` alone would resolve to the DELEGATE's own
+          # connection address, not this host's - always reachable,
+          # which would make confirmed_off permanently false for every
+          # host. hostvars[inventory_hostname] stays pinned to the
+          # original target regardless of delegation (the same fix
+          # applied to roles/system_poweroff/tasks/verify_network.yml).
+          delegate_to: "{{ poweroff_all_verify_delegate_host | default('localhost') }}"
+          become: false
+          register: _poweroff_all_wait_result
+          ignore_errors: true
+
+        - name: Record the verification outcome
+          ansible.builtin.set_fact:
+            poweroff_all_result:
+              host: "{{ inventory_hostname }}"
+              method: "network:port{{ poweroff_all_network_check_port | default(22) }}"
+              confirmed_off: "{{ not (_poweroff_all_wait_result.failed | default(true)) }}"
+
+        - name: Summarize this host's verification result
+          ansible.builtin.debug:
+            var: poweroff_all_result
+
+        - name: Fail this host if it never stopped responding within the timeout
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }} was still answering on port
+              {{ poweroff_all_network_check_port | default(22) }} after
+              {{ poweroff_all_verify_timeout_seconds | default(300) }}s -
+              network reachability only, not a hardware-confirmed power state.
+          when: not poweroff_all_result.confirmed_off
+
+- name: Fleet-wide power-off summary
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Print one line per host that ran through poweroff_all
+      ansible.builtin.debug:
+        msg: >-
+          {{ item }}:
+          {{ 'CONFIRMED OFF' if (hostvars[item].poweroff_all_result.confirmed_off | default(false)) else 'NOT CONFIRMED' }}
+          ({{ hostvars[item].poweroff_all_result.method | default('not run') }})
+      loop: "{{ groups['all'] }}"
+      when: hostvars[item].poweroff_all_result is defined

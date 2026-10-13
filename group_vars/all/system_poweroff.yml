@@ -1,0 +1,27 @@
+---
+# group_vars/all/system_poweroff.yml
+#
+# Fleet-wide defaults for roles/system_poweroff (see its README.md).
+# Everything here can be left as-is - the role's own
+# defaults/main.yml already ships these same values - this file
+# exists purely as the expected place to override them, matching
+# every other group_vars/all/*.yml in this repo.
+#
+# The two commented-out lines below are placeholders only. Real BMC
+# (iLO) credentials belong in an ansible-vault encrypted
+# group_vars/all/system_poweroff_secrets.yml instead - same workflow
+# already documented in group_vars/all/log_db.yml for the database
+# passwords:
+#
+#   ansible-vault create group_vars/all/system_poweroff_secrets.yml
+#
+#     system_poweroff_bmc_user: "a real iLO account"
+#     system_poweroff_bmc_password: "a real iLO password"
+#
+# ...then this file's plain CHANGE_ME defaults are naturally
+# overridden by the vaulted ones (group_vars/all/*_secrets.yml is
+# already excluded from git by .gitignore, and Ansible merges all
+# group_vars/all/*.yml together).
+
+# system_poweroff_bmc_tool: ipmitool
+# system_poweroff_verify_timeout_seconds: 300

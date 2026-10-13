@@ -1,0 +1,23 @@
+# Managed by Ansible (roles/host_availability_watcher) - do not edit by hand.
+# Kept as a separate settings module from host_availability_watcher.py
+# itself, same reasoning as roles/service_failure_watcher's config.py.j2
+# split.
+
+HOSTS = [
+{% for h in host_availability_watcher_hosts %}
+    "{{ h }}",
+{% endfor %}
+]
+
+PING_COUNT = {{ host_availability_watcher_ping_count }}
+PING_TIMEOUT_SECONDS = {{ host_availability_watcher_ping_timeout_seconds }}
+SSH_PORT = {{ host_availability_watcher_ssh_port }}
+SSH_TIMEOUT_SECONDS = {{ host_availability_watcher_ssh_timeout_seconds }}
+CONSECUTIVE_FAILURES_THRESHOLD = {{ host_availability_watcher_consecutive_failures_threshold }}
+NOTIFY_RECOVERY = {{ host_availability_watcher_notify_recovery | bool }}
+STATE_FILE = "{{ host_availability_watcher_state_file }}"
+
+EMAIL_TO = {{ host_availability_watcher_email_to | to_json }}
+EMAIL_FROM = "{{ host_availability_watcher_email_from }}"
+SMTP_HOST = "{{ host_availability_watcher_smtp_host }}"
+SMTP_PORT = {{ host_availability_watcher_smtp_port }}

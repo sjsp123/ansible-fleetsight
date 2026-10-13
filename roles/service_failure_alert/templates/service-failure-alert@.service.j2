@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/service_failure_alert) - do not edit by hand.
+[Unit]
+Description=Send a real-time alert email because %I entered the failed state
+
+[Service]
+Type=oneshot
+ExecStart={{ service_failure_alert_script_path }} %I
+# Deliberately no explicit User=/Group= - runs as root (systemd's default
+# for system units), the same privilege level as the unit that failed
+# and the one running `systemctl status` on it. Fine for a small,
+# Ansible-managed, hardcoded-argument-list local script.

@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/log_alerter) - do not edit by hand.
+[Unit]
+Description=Run log-alerter.service every {{ log_alerter_poll_interval_seconds }}s
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec={{ log_alerter_poll_interval_seconds }}s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

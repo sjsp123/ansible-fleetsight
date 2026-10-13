@@ -1,0 +1,10 @@
+---
+# Red Hat KB 2762771 documents `service auditd restart` because auditd's
+# RefuseManualStop blocks a plain `systemctl restart auditd`. The `service`
+# module in modern Ansible resolves to the same wrapper that redirects to
+# systemctl and handles the auditd-specific stop rules correctly.
+- name: Restart auditd
+  ansible.builtin.service:
+    name: auditd
+    state: restarted
+    use: service

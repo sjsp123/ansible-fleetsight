@@ -1,0 +1,179 @@
+---
+# roles/rsyslog_client/tasks/main.yml
+#
+# Configures this host to forward its logs (local + journald) to the
+# central rsyslog collector, keeping local logging intact and buffering
+# messages on disk if the collector is briefly unreachable.
+
+- name: Fail fast if the log_collector group is missing or empty
+  ansible.builtin.assert:
+    that:
+      - groups[log_collector_group] is defined
+      - groups[log_collector_group] | length > 0
+    fail_msg: >-
+      No hosts found in the '{{ log_collector_group }}' inventory group.
+      Add exactly one collector host to that group before running this role.
+
+- name: Resolve the collector's address
+  ansible.builtin.set_fact:
+    log_collector_host: >-
+      {{ hostvars[groups[log_collector_group][0]].rsyslog_collector_advertise_host
+         | default(hostvars[groups[log_collector_group][0]].ansible_host, true)
+         | default(groups[log_collector_group][0], true) }}
+  # Precedence: rsyslog_collector_advertise_host (explicit override, needed when
+  # the collector's inventory name/ansible_host isn't reachable from OTHER hosts -
+  # e.g. a 'localhost'/ansible_connection=local collector) > ansible_host > the
+  # collector's inventory hostname.
+
+- name: Fail fast if the resolved collector address is unusable from this host
+  ansible.builtin.assert:
+    that:
+      - log_collector_host not in ['localhost', '127.0.0.1']
+    fail_msg: >-
+      log_collector_host resolved to '{{ log_collector_host }}', which every
+      client would interpret as itself. Set rsyslog_collector_advertise_host
+      (or ansible_host) on the '{{ groups[log_collector_group][0] }}' host in
+      your inventory to its real address reachable from other hosts (e.g. its
+      LAN IP or FQDN).
+  when: inventory_hostname != groups[log_collector_group][0]
+
+- name: Ensure rsyslog is installed and enabled
+  ansible.builtin.package:
+    name: rsyslog
+    state: present
+  become: true
+
+- name: Install rsyslog gtls (GnuTLS) stream driver for TLS-encrypted syslog
+  ansible.builtin.package:
+    name: rsyslog-gnutls
+    state: present
+  become: true
+  when: rsyslog_tls_enabled | bool
+
+- name: Fail fast if TLS is enabled here but the collector's CA certificate isn't available
+  ansible.builtin.assert:
+    that:
+      - hostvars[groups[log_collector_group][0]].rsyslog_tls_ca_cert_content is defined
+      - hostvars[groups[log_collector_group][0]].rsyslog_tls_ca_cert_content | length > 0
+    fail_msg: >-
+      rsyslog_tls_enabled is true here, but no CA certificate was found on
+      '{{ groups[log_collector_group][0] }}'. Make sure rsyslog_tls_enabled
+      is ALSO true on the collector, and that roles/rsyslog_collector has
+      already run on it in THIS SAME playbook invocation - it must run
+      before roles/rsyslog_client, exactly as ordered in
+      playbooks/centralized_logging.yml.
+  when: rsyslog_tls_enabled | bool
+
+- name: Fail fast if TLS is enabled but no permitted peer name could be resolved
+  ansible.builtin.assert:
+    that:
+      - rsyslog_tls_permitted_peer | length > 0
+    fail_msg: >-
+      rsyslog_tls_permitted_peer resolved empty. Set rsyslog_tls_cn
+      explicitly on the collector host, or override
+      rsyslog_tls_permitted_peer here, so this client knows what name to
+      expect on the collector's certificate.
+  when: rsyslog_tls_enabled | bool
+
+- name: Ensure the TLS certificate directory exists
+  ansible.builtin.file:
+    path: "{{ rsyslog_tls_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when: rsyslog_tls_enabled | bool
+
+- name: Deploy the collector's CA certificate for TLS verification
+  ansible.builtin.copy:
+    dest: "{{ rsyslog_tls_ca_cert_path }}"
+    content: "{{ hostvars[groups[log_collector_group][0]].rsyslog_tls_ca_cert_content }}"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when: rsyslog_tls_enabled | bool
+  notify: Restart rsyslog
+
+- name: Deploy client forwarding configuration
+  ansible.builtin.template:
+    src: 90-remote-forwarding.conf.j2
+    dest: /etc/rsyslog.d/90-remote-forwarding.conf
+    owner: root
+    group: root
+    mode: "0640"
+  become: true
+  notify: Restart rsyslog
+
+- name: Ensure rsyslog forwarding config is active before sending test message
+  ansible.builtin.meta: flush_handlers
+  when: rsyslog_forwarding_test_enabled | bool
+
+- name: Generate unique end-to-end forwarding test token
+  ansible.builtin.set_fact:
+    rsyslog_forwarding_test_token: "{{ inventory_hostname }}-{{ ansible_date_time.epoch }}-{{ 999999 | random }}"
+  when: rsyslog_forwarding_test_enabled | bool
+
+- name: Send end-to-end forwarding test message
+  ansible.builtin.command:
+    cmd: >-
+      logger -t {{ rsyslog_forwarding_test_tag }}
+      "rsyslog_forwarding_test_token={{ rsyslog_forwarding_test_token }}"
+  changed_when: false
+  when: rsyslog_forwarding_test_enabled | bool
+
+- name: Ensure journald drop-in override directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when: journald_persistent_storage | bool
+
+- name: Enable persistent journald storage (keeps logs across reboots)
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/00-persistent-storage.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/rsyslog_client) - do not edit by hand.
+      [Journal]
+      Storage=persistent
+  become: true
+  when: journald_persistent_storage | bool
+  notify: Restart systemd-journald
+
+- name: Flush handlers so journald restart applies before verification
+  ansible.builtin.meta: flush_handlers
+  when: journald_persistent_storage | bool
+
+- name: Check persistent journal directory exists
+  ansible.builtin.stat:
+    path: /var/log/journal
+  register: journald_persistent_dir
+  when: journald_persistent_storage | bool
+
+- name: Record boots known to journald (non-disruptive check)
+  ansible.builtin.command: journalctl --list-boots --no-pager
+  register: journald_boot_list
+  changed_when: false
+  become: true
+  when: journald_persistent_storage | bool
+
+- name: Report journald persistence status
+  ansible.builtin.debug:
+    msg: >-
+      Persistent journal directory {{ 'exists' if journald_persistent_dir.stat.exists
+      else 'NOT FOUND (Storage=persistent may not have taken effect yet)' }} at
+      /var/log/journal. Boots recorded so far: {{ journald_boot_list.stdout_lines | length }}.
+      {{ 'Journal history already spans multiple boots - persistence confirmed.'
+      if journald_boot_list.stdout_lines | length > 1 else
+      'Only one boot recorded so far, so persistence across a reboot is not yet
+      provable. It will confirm itself naturally the next time this host is
+      rebooted for any other reason (patching, maintenance, etc.) - no action
+      needed now.' }}
+  when: journald_persistent_storage | bool

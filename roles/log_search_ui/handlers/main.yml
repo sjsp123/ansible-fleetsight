@@ -1,0 +1,7 @@
+---
+- name: Restart log-search-ui
+  ansible.builtin.systemd:
+    name: log-search-ui
+    state: restarted
+    daemon_reload: true
+  become: true

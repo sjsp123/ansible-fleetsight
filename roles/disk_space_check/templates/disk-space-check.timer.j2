@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/disk_space_check) - do not edit by hand.
+[Unit]
+Description=Run disk-space-check.service every {{ disk_space_check_poll_interval_seconds }}s
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec={{ disk_space_check_poll_interval_seconds }}s
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

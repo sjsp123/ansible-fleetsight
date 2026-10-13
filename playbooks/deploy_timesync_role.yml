@@ -1,0 +1,120 @@
+---
+# playbooks/deploy_timesync_role.yml
+#
+# Deploys chrony/NTP via the upstream redhat.rhel_system_roles.timesync
+# role. This is the standard time sync path in this repo - the previous
+# own-template path (templates/chrony.conf.j2 +
+# playbooks/deploy_chronyd.yml / copy_idm_chrony_conf.yml) was removed.
+# See rhel_system_roles/README.md for usage and caveats.
+#
+# Requires the redhat.rhel_system_roles collection, installed on the
+# control node via `sudo dnf install rhel-system-roles` (RHEL AppStream
+# RPM - NOT a Galaxy download; see rhel_system_roles/README.md
+# "Installing the collection" for why and for the offline RPM path).
+#
+# Idempotent: safe to re-run. Converges /etc/chrony.conf to the role's
+# configuration with the NTP servers from group_vars/all/timesync.yml
+# (environments may override - see group_vars/homelab.yml for the lab's
+# clients-sync-from-idm1 topology) and restarts chronyd only when
+# something changed.
+#
+# Hosts listed in timesync_ntp_server_hosts additionally get "allow"
+# directives for the subnets in timesync_ntp_server_allow_subnets,
+# because RHEL chronyd refuses to serve NTP to clients until told to
+# allow them - the upstream role only configures the client side.
+
+- name: Deploy chrony via redhat.rhel_system_roles.timesync
+  hosts: "{{ target_host }}"
+  become: true
+  gather_facts: true
+  # Validate every targeted host before any host reaches the role.
+  any_errors_fatal: true
+
+  vars_prompt:
+    - name: target_host
+      prompt: "Enter target host or inventory group"
+      private: no
+
+  tasks:
+    - name: Confirm the redhat.rhel_system_roles collection is installed on the control node
+      ansible.builtin.stat:
+        path: /usr/share/ansible/collections/ansible_collections/redhat/rhel_system_roles/MANIFEST.json
+      register: _timesync_role_collection
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Fail early with a clear message if the collection is missing
+      ansible.builtin.assert:
+        that:
+          - _timesync_role_collection.stat.exists
+        fail_msg: >-
+          redhat.rhel_system_roles isn't installed on this control node.
+          It's not a Galaxy collection you can pull with
+          `ansible-galaxy collection install -r requirements.yml` - run
+          `sudo dnf install rhel-system-roles` instead (see
+          rhel_system_roles/README.md "Installing the collection").
+        success_msg: "redhat.rhel_system_roles collection found - proceeding."
+
+    - name: Validate the effective NTP server list
+      ansible.builtin.assert:
+        that:
+          - timesync_ntp_hostnames is defined
+          - timesync_ntp_hostnames is sequence
+          - timesync_ntp_hostnames is not string
+          - timesync_ntp_hostnames is not mapping
+          - timesync_ntp_hostnames | length > 0
+        fail_msg: >-
+          timesync_ntp_hostnames must resolve to a nonempty YAML list.
+          Set chrony_ntp_servers in group_vars/all/site_hosts.yml for
+          the default, or group_vars/<realm_group>/site_hosts.yml for
+          a realm override. Do not use comma-separated inventory :vars.
+
+    - name: Validate each NTP server name
+      ansible.builtin.assert:
+        that:
+          - item is string
+          - item | length > 0
+          - item == (item | trim)
+          - item is match('^[^,\s]+$')
+        fail_msg: >-
+          Each NTP server must be a nonempty hostname or IP address
+          string without commas or whitespace. Use one YAML list item
+          per server.
+      loop: "{{ timesync_ntp_hostnames }}"
+
+    - name: Reset the role-format NTP server list
+      ansible.builtin.set_fact:
+        _timesync_role_servers: []
+
+    - name: Build the role-format server list from timesync_ntp_hostnames
+      ansible.builtin.set_fact:
+        _timesync_role_servers: "{{ (_timesync_role_servers | default([])) + [ {'hostname': item, 'iburst': true} ] }}"
+      loop: "{{ timesync_ntp_hostnames }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Run redhat.rhel_system_roles.timesync
+      ansible.builtin.include_role:
+        name: redhat.rhel_system_roles.timesync
+      vars:
+        timesync_ntp_servers: "{{ _timesync_role_servers }}"
+
+    - name: Allow NTP clients on the configured subnets (NTP server hosts only)
+      ansible.builtin.lineinfile:
+        path: /etc/chrony.conf
+        line: "allow {{ item }}"
+        insertafter: EOF
+      loop: "{{ timesync_ntp_server_allow_subnets | default([]) }}"
+      when: inventory_hostname in (timesync_ntp_server_hosts | default([]))
+      notify: Restart chronyd
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "timesync system role applied successfully"
+
+  handlers:
+    - name: Restart chronyd
+      ansible.builtin.service:
+        name: chronyd
+        state: restarted

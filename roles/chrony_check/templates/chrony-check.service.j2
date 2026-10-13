@@ -1,0 +1,10 @@
+# Managed by Ansible (roles/chrony_check) - do not edit by hand.
+[Unit]
+Description=Check local NTP/chrony sync status against expected state and log any breach
+After=chronyd.service
+
+[Service]
+Type=oneshot
+User={{ chrony_check_user }}
+WorkingDirectory={{ chrony_check_app_dir }}
+ExecStart=/usr/bin/python3 {{ chrony_check_app_dir }}/chrony_check.py

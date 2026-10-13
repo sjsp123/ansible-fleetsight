@@ -1,0 +1,48 @@
+---
+# group_vars/all/site_hosts.yml.example
+#
+# Template for the site-specific host lists used by
+# group_vars/all/host_checks.yml (see that file's header comment for the
+# full explanation of why this exists and how it's picked up).
+#
+#   cp group_vars/all/site_hosts.yml.example group_vars/all/site_hosts.yml
+#
+# site_hosts.yml is gitignored on purpose — it's the one place your own
+# real internal hostnames live, and it should never be committed. Every
+# value below is a fake example; replace with your own real FQDNs (or
+# just delete a list entirely and leave it out of the file if you don't
+# use that check — host_checks.yml's own `[]` default already covers
+# that column being blank).
+
+rsm222_hosts:
+  - app1.example.internal
+  - app2.example.internal
+
+rsm232_hosts:
+  - app3.example.internal
+
+flexlm_hosts:
+  - license1.example.internal
+
+abaqus_docs_hosts:
+  - docs1.example.internal
+
+prolient_hosts:
+  - app1.example.internal
+  - app2.example.internal
+  - app3.example.internal
+
+# Single hostname the "abaqdocs" check curls on ports 4040-4044 to confirm
+# a documentation server is answering.
+abaqus_docs_host: docs1.example.internal
+
+# NTP servers used by the redhat.rhel_system_roles.timesync deployment
+# (playbooks/deploy_timesync_role.yml, via the timesync_ntp_hostnames
+# default in group_vars/all/timesync.yml). Falls back to public
+# pool.ntp.org servers if this isn't set.
+# For different servers per realm, override this YAML list in
+# group_vars/<realm_group>/site_hosts.yml. Do not put a
+# comma-separated string in an inventory :vars block.
+chrony_ntp_servers:
+  - ntp1.example.internal
+  - ntp2.example.internal

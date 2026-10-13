@@ -1,0 +1,34 @@
+#!/bin/bash
+# Managed by Ansible (roles/log_db) - do not edit by hand.
+#
+# Deletes rows older than {{ log_db_retention_days }} days from
+# {{ log_db_table }} in {{ log_db_name }}, then reclaims space. Runs as the
+# postgres OS user via log-db-retention-cleanup.timer, using peer
+# authentication - no password needed.
+set -euo pipefail
+
+psql -d "{{ log_db_name }}" -v ON_ERROR_STOP=1 -c \
+  "DELETE FROM {{ log_db_table }} WHERE receivedat < now() - interval '{{ log_db_retention_days }} days';"
+
+# PostgreSQL's GIN index code can hit an internal "Lost path" error
+# (elog in ginFindParents(), see the upstream "GIN page deletion and page
+# recycling bugs" mailing list thread) when VACUUM's leaf-page-deletion
+# pass walks a posting tree page that was left mid-split by a concurrent
+# rsyslog insert. This is unrelated to the VACUUM PARALLEL degree - the
+# same code path runs in the leader process either way. Once a split is
+# stuck, VACUUM will keep hitting it on every run until the tree is
+# rebuilt, so detect this specific error and self-heal with a concurrent
+# reindex (safe, non-blocking to readers/writers) before retrying.
+vacuum_log="$(mktemp)"
+trap 'rm -f "$vacuum_log"' EXIT
+
+if ! psql -d "{{ log_db_name }}" -v ON_ERROR_STOP=1 -c "VACUUM (ANALYZE) {{ log_db_table }};" 2>"$vacuum_log"; then
+  if grep -q 'ERROR:.*Lost path' "$vacuum_log"; then
+    echo "VACUUM hit the known GIN 'Lost path' issue; rebuilding idx_{{ log_db_table }}_message_trgm and retrying" >&2
+    psql -d "{{ log_db_name }}" -v ON_ERROR_STOP=1 -c "REINDEX INDEX CONCURRENTLY idx_{{ log_db_table }}_message_trgm;"
+    psql -d "{{ log_db_name }}" -v ON_ERROR_STOP=1 -c "VACUUM (ANALYZE) {{ log_db_table }};"
+  else
+    cat "$vacuum_log" >&2
+    exit 1
+  fi
+fi

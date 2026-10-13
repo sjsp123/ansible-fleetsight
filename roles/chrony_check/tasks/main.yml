@@ -1,0 +1,67 @@
+---
+# roles/chrony_check/tasks/main.yml
+#
+# Deploys a small stdlib-only local check that inspects THIS host's
+# NTP/chrony status (timedatectl NTPSynchronized, chronyd's own
+# systemd active state, and chronyc tracking's Leap status) and logs
+# one syslog message per breach - picked up by roles/rsyslog_client's
+# existing imjournal forwarding (already enabled fleet-wide) and
+# consumed centrally by roles/chrony_watcher on [log_collector].
+# Deployed to every [log_clients] host - see README.md.
+
+- name: Create the unprivileged chrony_check system account
+  ansible.builtin.user:
+    name: "{{ chrony_check_user }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ chrony_check_app_dir }}"
+    create_home: false
+  become: true
+
+- name: Create the app directory
+  ansible.builtin.file:
+    path: "{{ chrony_check_app_dir }}"
+    state: directory
+    owner: "{{ chrony_check_user }}"
+    group: "{{ chrony_check_user }}"
+    mode: "0750"
+  become: true
+
+- name: Deploy the check script
+  ansible.builtin.copy:
+    src: chrony_check.py
+    dest: "{{ chrony_check_app_dir }}/chrony_check.py"
+    owner: "{{ chrony_check_user }}"
+    group: "{{ chrony_check_user }}"
+    mode: "0750"
+  become: true
+
+- name: Deploy the systemd service unit
+  ansible.builtin.template:
+    src: chrony-check.service.j2
+    dest: /etc/systemd/system/chrony-check.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd
+
+- name: Deploy the systemd timer unit
+  ansible.builtin.template:
+    src: chrony-check.timer.j2
+    dest: /etc/systemd/system/chrony-check.timer
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd
+
+- name: Apply systemd unit changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the chrony-check timer
+  ansible.builtin.systemd:
+    name: chrony-check.timer
+    state: started
+    enabled: true
+  become: true

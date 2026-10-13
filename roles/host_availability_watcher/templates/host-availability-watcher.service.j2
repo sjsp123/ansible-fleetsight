@@ -1,0 +1,10 @@
+# Managed by Ansible (roles/host_availability_watcher) - do not edit by hand.
+[Unit]
+Description=Ping + SSH-port heartbeat check for the fleet and email on state change
+After=network.target
+
+[Service]
+Type=oneshot
+User={{ host_availability_watcher_user }}
+WorkingDirectory={{ host_availability_watcher_app_dir }}
+ExecStart=/usr/bin/python3 {{ host_availability_watcher_app_dir }}/host_availability_watcher.py

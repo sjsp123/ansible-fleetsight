@@ -1,0 +1,42 @@
+---
+# copy_gssapi_delegation.yml
+- name: Ensure GSSAPI credential delegation is enabled for all SSH users
+  hosts: "{{ target_host }}"     # <-- change to your target group or hosts
+  become: true                   # need root to write to /etc/ssh/ssh_config.d
+
+  vars_prompt:
+    - name: target_host
+      prompt: "Enter target host or inventory group"
+      private: no
+
+  vars:
+    # The file name you want to use - you can pick any name that follows the
+    # naming convention used by the ssh_config.d directory (e.g. 50-gssapi.conf)
+    gssapi_conf_file: "50-GSSAPIDelegateCredentials.conf"
+
+  tasks:
+    - name: Create the ssh_config.d directory if it does not exist
+      ansible.builtin.file:
+        path: /etc/ssh/ssh_config.d
+        state: directory
+        mode: "0755"
+
+    - name: Copy the GSSAPI delegation configuration file
+      ansible.builtin.copy:
+        src: ./ssh/{{ gssapi_conf_file }}
+        dest: /etc/ssh/ssh_config.d/{{ gssapi_conf_file }}
+        mode: "0644"
+        owner: root
+        group: root
+
+    - name: Verify the file was copied correctly
+      ansible.builtin.command: cat /etc/ssh/ssh_config.d/{{ gssapi_conf_file }}
+      register: cat_output
+      changed_when: false
+      failed_when: "'GSSAPIDelegateCredentials yes' not in cat_output.stdout"
+
+    - name: Restart the SSH daemon so the new config is read
+      ansible.builtin.systemd:
+        name: sshd
+        state: restarted
+        daemon_reload: yes

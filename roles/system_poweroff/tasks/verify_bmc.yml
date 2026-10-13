@@ -1,0 +1,73 @@
+---
+# roles/system_poweroff/tasks/verify_bmc.yml
+#
+# Included only for hosts in [hpe_ilo_hosts] (see tasks/main.yml).
+# Runs from system_poweroff_verify_delegate_host (the control node by
+# default), never from the target host itself - by the time we get
+# here the target's OS (and any in-band access) may already be gone,
+# so this has to query the iLO's own management network address
+# instead (captured earlier in tasks/main.yml as
+# _system_poweroff_bmc_address).
+#
+# become is explicitly disabled here even though the play may set
+# become: true overall - querying a REMOTE BMC over the network from
+# the delegate host does not need root there, and forcing sudo on a
+# jump host that may not have it configured would just add a new way
+# for this to fail.
+
+- name: Poll iLO/BMC power state via ipmitool (lanplus/IPMI-over-LAN)
+  ansible.builtin.command: >-
+    ipmitool -I lanplus -H {{ _system_poweroff_bmc_address }}
+    -U {{ system_poweroff_bmc_user }} -E
+    chassis power status
+  environment:
+    IPMI_PASSWORD: "{{ system_poweroff_bmc_password }}"
+  delegate_to: "{{ system_poweroff_verify_delegate_host }}"
+  become: false
+  changed_when: false
+  until: "_system_poweroff_power_status.rc == 0 and 'is off' in (_system_poweroff_power_status.stdout | lower)"
+  retries: "{{ ((system_poweroff_verify_timeout_seconds | int) // (system_poweroff_verify_poll_interval_seconds | int)) | int }}"
+  delay: "{{ system_poweroff_verify_poll_interval_seconds }}"
+  register: _system_poweroff_power_status
+  ignore_errors: true
+  no_log: true
+  when: system_poweroff_bmc_tool == 'ipmitool'
+
+- name: Poll iLO power state via ilorest (Redfish)
+  ansible.builtin.shell: >-
+    ilorest rawget /redfish/v1/Systems/1/
+    --url=https://{{ _system_poweroff_bmc_address }}
+    -u {{ system_poweroff_bmc_user }} -p {{ system_poweroff_bmc_password }}
+    2>/dev/null | grep -o '"PowerState"[^,}]*'
+  delegate_to: "{{ system_poweroff_verify_delegate_host }}"
+  become: false
+  changed_when: false
+  until: "_system_poweroff_power_status.rc == 0 and 'off' in (_system_poweroff_power_status.stdout | lower)"
+  retries: "{{ ((system_poweroff_verify_timeout_seconds | int) // (system_poweroff_verify_poll_interval_seconds | int)) | int }}"
+  delay: "{{ system_poweroff_verify_poll_interval_seconds }}"
+  register: _system_poweroff_power_status
+  ignore_errors: true
+  no_log: true
+  when: system_poweroff_bmc_tool == 'ilorest'
+  # ilorest's password is passed as a CLI argument (no documented
+  # environment-variable equivalent to ipmitool's -E/IPMI_PASSWORD) -
+  # see README "Choosing ipmitool vs. ilorest" for the tradeoff this
+  # implies if process-list visibility on the delegate host matters in
+  # your environment.
+
+- name: Record the verification outcome
+  ansible.builtin.set_fact:
+    system_poweroff_result:
+      host: "{{ inventory_hostname }}"
+      method: "bmc:{{ system_poweroff_bmc_tool }}"
+      confirmed_off: "{{ not (_system_poweroff_power_status.failed | default(true)) }}"
+
+- name: Fail this host if power-off was never confirmed within the timeout
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} ({{ _system_poweroff_bmc_address }}) did
+      not report chassis power Off within
+      {{ system_poweroff_verify_timeout_seconds }}s via
+      {{ system_poweroff_bmc_tool }}. Last output:
+      {{ _system_poweroff_power_status.stdout | default('(no output)') }}
+  when: not system_poweroff_result.confirmed_off

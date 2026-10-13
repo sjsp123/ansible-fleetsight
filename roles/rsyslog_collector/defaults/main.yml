@@ -1,0 +1,120 @@
+---
+# roles/rsyslog_collector/defaults/main.yml
+
+# TCP port the collector listens on for incoming syslog traffic.
+rsyslog_collector_port: 6514
+
+# Where per-source-host logs are stored on the collector.
+rsyslog_remote_log_dir: /var/log/remote
+
+# Logrotate retention for received remote logs.
+rsyslog_remote_log_retain_days: 14
+
+# Whether to ALSO write incoming remote log messages into a PostgreSQL
+# database (roles/log_db), alongside the existing per-host flat files, so
+# they can be searched by pattern via roles/log_search_ui. Requires
+# roles/log_db to have already run on this host. The flat-file storage
+# above is unaffected either way - this is an additional output, not a
+# replacement.
+rsyslog_collector_db_enabled: false
+rsyslog_collector_db_host: localhost
+rsyslog_collector_db_name: "{{ log_db_name | default('syslog') }}"
+rsyslog_collector_db_table: "{{ log_db_table | default('systemevents') }}"
+rsyslog_collector_db_user: "{{ log_db_writer_user | default('rsyslog') }}"
+rsyslog_collector_db_password: "{{ log_db_writer_password | default('CHANGE_ME_rsyslog_writer') }}"
+
+# Only a curated, audit-focused subset of incoming remote messages is
+# written to the database - not the full firehose. The per-host flat
+# files in rsyslog_remote_log_dir (see 10-remote-collector.conf.j2) are
+# NOT affected by either variable below and continue to capture every
+# received message at every severity, so nothing is permanently lost -
+# this filter only controls what becomes searchable in log_search_ui /
+# linuxdb_dashboard. See roles/rsyslog_collector/README.md "Database log
+# filtering" for the SIEM/compliance guidance (Red Hat's own remote-
+# logging docs, PCI DSS 10.2, NIST SP 800-92) this default is based on.
+#
+# RFC 5424 severity numbering used below: 0=emerg, 1=alert, 2=crit,
+# 3=err, 4=warning, 5=notice, 6=info, 7=debug - LOWER number = MORE
+# severe/urgent. A message is written to the database if its severity
+# is this value OR MORE URGENT (i.e. <=), for any facility NOT listed in
+# rsyslog_collector_db_always_facilities below. Default 5 (notice) drops
+# routine info/debug chatter while keeping notice/warning/err/crit/
+# alert/emerg. Raise to 6 (info) to be less aggressive (matches Red
+# Hat's own official remote-logging example, which excludes only
+# debug); lower to 4 (warning) to be more aggressive. Set to 7 to
+# effectively disable this half of the filter and store every severity
+# for every facility (still subject to the always-keep list below,
+# which becomes a no-op at that point since everything is already kept).
+rsyslog_collector_db_min_severity: 5
+
+# Facilities that are ALWAYS written to the database at every severity,
+# including debug, regardless of rsyslog_collector_db_min_severity above.
+# authpriv (sudo, su, sshd, login, PAM session open/close - RHEL's sudo
+# package is built with --with-logfac=authpriv, and PAM session messages
+# for these programs use the same facility) and cron (scheduled job
+# execution) are kept unfiltered by default because both routinely log
+# security/audit-relevant events - successful sudo commands, session
+# open/close, account changes, job execution - at notice or info
+# severity rather than warning+, so a severity-only filter would
+# silently drop exactly the events an auditor would ask for. This
+# mirrors Red Hat's own official remote-logging example config, which
+# always stores authpriv separately and unfiltered rather than folding
+# it into the general severity-filtered bucket. Add facilities here
+# (e.g. "local2") if your environment logs sudo/audit-relevant events
+# under a non-default facility - see the README for a psql query that
+# checks this against your own already-captured data before rollout.
+rsyslog_collector_db_always_facilities:
+  - authpriv
+  - cron
+
+# Whether to encrypt the client -> collector TCP transport with TLS
+# (rsyslog's gtls/GnuTLS StreamDriver, package rsyslog-gnutls - BaseOS/
+# AppStream, no EPEL). This is SERVER-ONLY TLS: the collector proves its
+# identity to every client via a certificate signed by a lab CA, and the
+# transport is fully encrypted, but the collector does NOT require or
+# check a certificate from clients (that would be mutual TLS, which was
+# deliberately not chosen here - see roles/rsyslog_collector/README.md).
+# Off by default so existing plaintext deployments are unaffected until
+# you opt in. Must match rsyslog_tls_enabled in roles/rsyslog_client.
+rsyslog_tls_enabled: false
+
+# Where CA/cert/key material lives on the COLLECTOR. Only the CA
+# certificate content (never the CA key, never the collector's own key)
+# is ever read off this host, by roles/rsyslog_client, via a runtime fact
+# passed through hostvars within the same playbook run.
+rsyslog_tls_dir: /etc/pki/rsyslog
+rsyslog_tls_ca_cert_path: "{{ rsyslog_tls_dir }}/rsyslog-ca-cert.pem"
+rsyslog_tls_ca_key_path: "{{ rsyslog_tls_dir }}/rsyslog-ca-key.pem"
+rsyslog_tls_cert_path: "{{ rsyslog_tls_dir }}/rsyslog-collector-cert.pem"
+rsyslog_tls_key_path: "{{ rsyslog_tls_dir }}/rsyslog-collector-key.pem"
+
+# Whether this role generates the self-signed lab CA and the collector's
+# own certificate itself (the default - needs nothing but openssl from
+# BaseOS, same idiom as roles/linuxdb_dashboard's
+# linuxdb_dashboard_tls_generate_self_signed). Set to false and place your
+# own files at the *_path variables above beforehand if you'd rather use
+# certificates from an existing CA (e.g. your IdM CA) instead.
+rsyslog_tls_generate_certs: true
+
+rsyslog_tls_ca_days: 3650
+rsyslog_tls_cert_days: 825
+
+# CN (and matching subjectAltName DNS entry) put on the generated
+# collector certificate. Clients validate the collector's identity against
+# this exact name (see rsyslog_tls_permitted_peer in roles/rsyslog_client),
+# so it should be whatever address/FQDN clients actually connect to - i.e.
+# normally the same value as rsyslog_collector_advertise_host set on the
+# collector host in inventory, if that's used.
+rsyslog_tls_cn: "{{ rsyslog_collector_advertise_host | default(ansible_fqdn, true) | default(inventory_hostname, true) }}"
+
+# GnuTLS priority string enforced on the imtcp listener, floor-restricting
+# the negotiated protocol to TLS 1.2+ (TLS 1.0/1.1/SSLv2/SSLv3 all refused)
+# and preferring an AEAD/forward-secrecy cipher suite - satisfies the TLS
+# version floor expected by NIST SP 800-52r2 and PCI DSS 4.0. Deliberately
+# uses GnuTLS-native colon-separated priority-string syntax (not the
+# OpenSSL-config-style "Protocol=ALL,...\nMinProtocol=..." form), since the
+# latter is known to throw a parse error on some RHEL 8 rsyslog builds
+# (see access.redhat.com/solutions/6172242) - this form is universally
+# supported by the gtls driver on RHEL 8, 9, and 10. Must match
+# roles/rsyslog_client's copy of this same variable.
+rsyslog_tls_priority_string: "NORMAL:-VERS-TLS1.0:-VERS-TLS1.1"

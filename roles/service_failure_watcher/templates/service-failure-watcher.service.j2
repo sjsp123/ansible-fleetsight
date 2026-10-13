@@ -1,0 +1,10 @@
+# Managed by Ansible (roles/service_failure_watcher) - do not edit by hand.
+[Unit]
+Description=Poll log_db for new systemd unit failures fleet-wide and email a summary
+After=network.target postgresql.service
+
+[Service]
+Type=oneshot
+User={{ service_failure_watcher_user }}
+WorkingDirectory={{ service_failure_watcher_app_dir }}
+ExecStart=/usr/bin/python3 {{ service_failure_watcher_app_dir }}/service_failure_watcher.py

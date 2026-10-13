@@ -1,0 +1,178 @@
+---
+# roles/system_update/tasks/main.yml
+#
+# Uses the dnf/yum
+# Ansible modules directly (no shell subprocess, no `which` probing) and
+# branches on the ansible_pkg_mgr fact that Ansible already gathers, so the
+# same role works across RHEL 7 (yum) through RHEL 8/9/10 (dnf).
+
+- name: Fail fast on unsupported package managers
+  ansible.builtin.assert:
+    that:
+      - ansible_pkg_mgr in ['dnf', 'yum']
+    fail_msg: >-
+      {{ inventory_hostname }} reports package manager '{{ ansible_pkg_mgr }}',
+      which this role does not support.
+    quiet: true
+  tags: [update]
+
+- name: Ensure the *-utils package providing needs-restarting is present
+  ansible.builtin.package:
+    name: "{{ 'dnf-utils' if ansible_pkg_mgr == 'dnf' else 'yum-utils' }}"
+    state: present
+  tags: [update]
+
+- name: Refresh package metadata (dnf)
+  ansible.builtin.dnf:
+    update_cache: true
+  register: system_update_cache_dnf
+  when: ansible_pkg_mgr == 'dnf'
+  tags: [update]
+
+- name: Refresh package metadata (yum)
+  ansible.builtin.yum:
+    update_cache: true
+  register: system_update_cache_yum
+  when: ansible_pkg_mgr == 'yum'
+  tags: [update]
+
+- name: List packages with pending updates (dnf)
+  ansible.builtin.command: dnf list --upgrades
+  register: system_update_pending_dnf
+  changed_when: false
+  failed_when: false
+  when: ansible_pkg_mgr == 'dnf'
+  tags: [update]
+
+- name: List packages with pending updates (yum)
+  ansible.builtin.command: yum list updates
+  register: system_update_pending_yum
+  changed_when: false
+  failed_when: false
+  when: ansible_pkg_mgr == 'yum'
+  tags: [update]
+
+- name: Show pending updates before upgrading
+  ansible.builtin.debug:
+    msg: "{{ (system_update_pending_dnf.stdout_lines | default(system_update_pending_yum.stdout_lines) | default(['(none)'])) }}"
+  tags: [update]
+
+- name: Upgrade all packages (dnf)
+  ansible.builtin.dnf:
+    name: '*'
+    state: latest
+    security: "{{ system_update_security_only }}"
+    exclude: "{{ system_update_exclude if system_update_exclude | length > 0 else omit }}"
+  register: system_update_upgrade_dnf
+  when: ansible_pkg_mgr == 'dnf'
+  tags: [update]
+
+- name: Show what the dnf upgrade actually did
+  ansible.builtin.debug:
+    msg: "{{ system_update_upgrade_dnf.results }}"
+  when:
+    - ansible_pkg_mgr == 'dnf'
+    - system_update_upgrade_dnf.changed | default(false)
+  tags: [update]
+
+- name: Upgrade all packages (yum)
+  ansible.builtin.yum:
+    name: '*'
+    state: latest
+    security: "{{ system_update_security_only }}"
+    exclude: "{{ system_update_exclude if system_update_exclude | length > 0 else omit }}"
+  register: system_update_upgrade_yum
+  when: ansible_pkg_mgr == 'yum'
+  tags: [update]
+
+- name: Show what the yum upgrade actually did
+  ansible.builtin.debug:
+    msg: "{{ system_update_upgrade_yum.results }}"
+  when:
+    - ansible_pkg_mgr == 'yum'
+    - system_update_upgrade_yum.changed | default(false)
+  tags: [update]
+
+- name: Remove packages that are no longer required (dnf)
+  ansible.builtin.dnf:
+    autoremove: true
+  register: system_update_autoremove_dnf
+  # | bool guards against the same string-conditional deprecation as
+  # the reboot task below: this variable can be overridden with
+  # `-e system_update_autoremove=true`, and CLI extra-vars always
+  # arrive as raw strings, not native booleans.
+  when:
+    - ansible_pkg_mgr == 'dnf'
+    - system_update_autoremove | bool
+  tags: [update]
+
+- name: Remove packages that are no longer required (yum)
+  ansible.builtin.yum:
+    autoremove: true
+  register: system_update_autoremove_yum
+  # See the dnf autoremove task above for why | bool is needed here.
+  when:
+    - ansible_pkg_mgr == 'yum'
+    - system_update_autoremove | bool
+  tags: [update]
+
+- name: Show what autoremove actually did
+  ansible.builtin.debug:
+    msg: "{{ (system_update_autoremove_dnf.results | default(system_update_autoremove_yum.results | default([]))) }}"
+  when: >-
+    (system_update_autoremove_dnf.changed | default(false))
+    or (system_update_autoremove_yum.changed | default(false))
+  tags: [update]
+
+- name: Record whether the transaction actually changed anything
+  ansible.builtin.set_fact:
+    system_update_changed: >-
+      {{ ((system_update_upgrade_dnf.changed | default(false))
+         or (system_update_upgrade_yum.changed | default(false))) | bool }}
+  tags: [update]
+
+- name: Check whether the running kernel/libs require a reboot
+  ansible.builtin.command: needs-restarting -r
+  register: system_update_needs_restarting
+  failed_when: false
+  changed_when: false
+  tags: [update, reboot]
+
+- name: Set reboot-required fact
+  ansible.builtin.set_fact:
+    system_update_reboot_required: "{{ (system_update_needs_restarting.rc != 0) | bool }}"
+  tags: [update, reboot]
+
+- name: Reboot the host because a reboot is required
+  ansible.builtin.reboot:
+    msg: "Reboot triggered by Ansible after system update"
+    connect_timeout: "{{ system_update_reboot_connect_timeout }}"
+    reboot_timeout: "{{ system_update_reboot_timeout }}"
+    pre_reboot_delay: "{{ system_update_reboot_pre_delay }}"
+    post_reboot_delay: "{{ system_update_reboot_post_delay }}"
+    test_command: "{{ system_update_test_command }}"
+  # Both conditions are cast with | bool rather than used bare: this
+  # role's own set_fact for system_update_reboot_required renders a
+  # Jinja expression that some Ansible versions store back as the
+  # string "True"/"False" rather than a native boolean, and this
+  # role's README explicitly documents overriding
+  # system_update_reboot_enabled via `-e system_update_reboot_enabled=
+  # false` on the command line - extra-vars passed that way always
+  # arrive as raw strings too. A bare string in a `when:` list is
+  # deprecated in ansible-core (removal in 2.19) and produces a
+  # runtime warning even though it still evaluates correctly today -
+  # | bool makes both cases explicit native booleans and silences it.
+  when:
+    - system_update_reboot_required | bool
+    - system_update_reboot_enabled | bool
+  register: system_update_reboot_result
+  tags: [reboot]
+
+- name: Report outcome
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: packages_changed={{ system_update_changed }},
+      reboot_required={{ system_update_reboot_required }},
+      reboot_performed={{ (system_update_reboot_result is defined) and
+        (system_update_reboot_result.changed | default(false)) }}
+  tags: [update]

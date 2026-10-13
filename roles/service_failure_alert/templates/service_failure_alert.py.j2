@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""
+Managed by Ansible (roles/service_failure_alert) - do not edit by hand.
+
+Invoked by systemd via service-failure-alert@<unit>.service, itself
+triggered by OnFailure= the instant <unit> enters the "failed" state -
+see roles/service_failure_alert/README.md. Sends one email, right now,
+with `systemctl status` output for context, through the LOCAL mail
+transport agent (already configured to relay onward - see README
+"Mail delivery"). This script never talks to an external SMTP relay
+and never handles any relay credentials itself.
+"""
+import smtplib
+import subprocess
+import sys
+from email.mime.text import MIMEText
+from email.utils import formatdate
+
+SMTP_HOST = "{{ service_failure_alert_smtp_host }}"
+SMTP_PORT = {{ service_failure_alert_smtp_port }}
+EMAIL_FROM = "{{ service_failure_alert_email_from }}"
+EMAIL_TO = "{{ service_failure_alert_email_to }}"
+
+
+def run(cmd):
+    try:
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=10,
+        ).stdout
+    except Exception as exc:  # noqa: BLE001 - best-effort context only
+        return "(could not run %s: %s)" % (" ".join(cmd), exc)
+
+
+def main():
+    unit = sys.argv[1] if len(sys.argv) > 1 else "(unknown unit)"
+    status = run(["systemctl", "status", "--no-pager", "-l", unit])
+    hostname = run(["hostname", "-f"]).strip() or "(unknown host)"
+
+    body = (
+        "%s entered the FAILED state on %s.\n\n"
+        "This is a real-time alert fired by systemd's OnFailure= directly "
+        "on that host - not the next scheduled hostinfo/linuxdb_reports "
+        "cron run. Check the linuxdb dashboard's Overview page for this "
+        "host once the next report runs for the full picture.\n\n"
+        "systemctl status %s:\n%s\n"
+    ) % (unit, hostname, unit, status)
+
+    msg = MIMEText(body)
+    msg["Subject"] = "[%s] %s FAILED" % (hostname, unit)
+    msg["From"] = EMAIL_FROM
+    msg["To"] = EMAIL_TO
+    msg["Date"] = formatdate(localtime=True)
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as smtp:
+        smtp.sendmail(EMAIL_FROM, [EMAIL_TO], msg.as_string())
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,71 @@
+---
+# roles/idm_healthcheck_watch/tasks/main.yml
+#
+# Deploys a small stdlib-only poller that runs `ipa-healthcheck
+# --output-type=json` locally on this [idm] host and logs one syslog
+# message per non-SUCCESS finding - see README.md. Only ever run
+# against [idm] (see playbooks/centralized_logging.yml).
+
+- name: Ensure ipa-healthcheck package is installed (optional)
+  ansible.builtin.dnf:
+    name: ipa-healthcheck
+    state: present
+  when: idm_healthcheck_watch_install_package | bool
+  become: true
+
+- name: Create the app directory
+  ansible.builtin.file:
+    path: "{{ idm_healthcheck_watch_app_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  become: true
+
+- name: Deploy the config file
+  ansible.builtin.template:
+    src: config.py.j2
+    dest: "{{ idm_healthcheck_watch_app_dir }}/config.py"
+    owner: root
+    group: root
+    mode: "0640"
+  become: true
+
+- name: Deploy the check script
+  ansible.builtin.copy:
+    src: idm_healthcheck_watch.py
+    dest: "{{ idm_healthcheck_watch_app_dir }}/idm_healthcheck_watch.py"
+    owner: root
+    group: root
+    mode: "0750"
+  become: true
+
+- name: Deploy the systemd service unit
+  ansible.builtin.template:
+    src: idm-healthcheck-watch.service.j2
+    dest: /etc/systemd/system/idm-healthcheck-watch.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd
+
+- name: Deploy the systemd timer unit
+  ansible.builtin.template:
+    src: idm-healthcheck-watch.timer.j2
+    dest: /etc/systemd/system/idm-healthcheck-watch.timer
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd
+
+- name: Apply systemd unit changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the idm-healthcheck-watch timer
+  ansible.builtin.systemd:
+    name: idm-healthcheck-watch.timer
+    state: started
+    enabled: true
+  become: true

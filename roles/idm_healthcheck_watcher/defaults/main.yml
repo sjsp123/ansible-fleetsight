@@ -1,0 +1,68 @@
+---
+# roles/idm_healthcheck_watcher/defaults/main.yml
+#
+# Centralized, fleet-wide email alerting the moment ANY [idm] host's
+# local ipa-healthcheck run (roles/idm_healthcheck_watch) logs a
+# non-SUCCESS finding - no per-host mail relay required. Polls the
+# same log_db database roles/log_alerter, roles/disk_space_watcher,
+# and roles/chrony_watcher read, matching
+# roles/idm_healthcheck_watch's own fixed alert wording - see
+# README.md "How it works".
+#
+# This role is only ever deployed to [log_collector] (see
+# playbooks/centralized_logging.yml) - it reads log_db locally and
+# relies on roles/rsyslog_client already forwarding every host's
+# journald content (including roles/idm_healthcheck_watch's syslog
+# messages) to this collector.
+
+# Opt-in, matching the pattern used by roles/disk_space_watcher,
+# roles/chrony_watcher, etc: this role's own default is false;
+# group_vars/all/idm_healthcheck_watcher.yml flips it on fleet-wide by
+# default in this repo.
+idm_healthcheck_watcher_enabled: false
+
+# Poll cadence. Independent of, and much shorter than,
+# idm_healthcheck_watch_poll_interval_seconds (how often each [idm]
+# host re-runs its own local ipa-healthcheck). Matches
+# roles/disk_space_watcher's own 60s default.
+idm_healthcheck_watcher_poll_interval_seconds: 60
+
+# Hard cap on how many individual findings are listed in a single
+# alert email body, in case several land in the same poll window.
+idm_healthcheck_watcher_max_rows_per_email: 50
+
+# Where the "last row already alerted on" watermark is persisted
+# between runs (a single JSON file, not the database itself) - same
+# reasoning as roles/disk_space_watcher's own state file.
+idm_healthcheck_watcher_state_dir: /var/lib/idm_healthcheck_watcher
+idm_healthcheck_watcher_state_file: "{{ idm_healthcheck_watcher_state_dir }}/state.json"
+
+# Unprivileged system account the timer/service runs as. Unlike
+# roles/idm_healthcheck_watch (which must run as root on the [idm]
+# hosts), this role only reads log_db and sends mail - no elevated
+# privilege needed here.
+idm_healthcheck_watcher_user: idm_hc_watch
+
+idm_healthcheck_watcher_app_dir: /opt/idm_healthcheck_watcher
+
+# Read-only database connection - defaults to the matching log_db_*
+# variables (same pattern roles/log_alerter/disk_space_watcher/
+# chrony_watcher already use) so this stays in sync automatically as
+# long as you only override the log_db_*/rsyslog_collector_db_host
+# versions, not these directly.
+idm_healthcheck_watcher_db_host: "{{ rsyslog_collector_db_host | default('localhost') }}"
+idm_healthcheck_watcher_db_name: "{{ log_db_name | default('syslog') }}"
+idm_healthcheck_watcher_db_table: "{{ log_db_table | default('systemevents') }}"
+idm_healthcheck_watcher_db_user: "{{ log_db_reader_user | default('log_search') }}"
+idm_healthcheck_watcher_db_password: "{{ log_db_reader_password | default('CHANGE_ME_log_search_reader') }}"
+
+# Mail delivery - see README.md "Mail delivery": this always talks to
+# the LOCAL mail transport agent on idm_healthcheck_watcher_smtp_host
+# (the log_collector's own MTA, e.g. admin1's Postfix), never an
+# external relay directly, so no relay credentials are needed or
+# stored here.
+idm_healthcheck_watcher_email_to:
+  - root
+idm_healthcheck_watcher_email_from: "rhel-alerts@{{ ansible_fqdn | default(ansible_hostname) }}"
+idm_healthcheck_watcher_smtp_host: localhost
+idm_healthcheck_watcher_smtp_port: 25

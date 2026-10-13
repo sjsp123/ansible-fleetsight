@@ -1,0 +1,72 @@
+---
+# Role-internal defaults. See README.md for the full variable reference.
+#
+# This role runs a set of read-only diagnostic scripts against every host
+# in the play, then saves each script's raw output back on the CONTROL
+# NODE (the host running ansible-playbook — normally admin1) as a
+# timestamped file per host per check. It never writes anything durable
+# on the remote/managed hosts themselves (temp copies of the scripts are
+# removed after each run).
+
+linuxdb_reports_enabled: false
+
+# Whether to install sysstat (provides iostat, used by svr_check.sh's
+# DISK_IO check) on every managed host before running the checks.
+# sysstat is a standard RHEL BaseOS/AppStream package - installed via
+# the package module, nothing fetched outside RHEL's own repos. Set to
+# false if you'd rather manage this package yourself; DISK_IO degrades
+# gracefully to an INFO row when iostat isn't present.
+linuxdb_reports_install_sysstat: true
+
+# Where collected reports are stored, on the control node. Point this at
+# a dedicated disk/mount if you have one (e.g. /linuxdb/reports) rather
+# than the root filesystem, since history accumulates over time.
+#
+# NOTE: this repo's group_vars/all/linuxdb_dashboard.yml DUPLICATES this
+# value (and linuxdb_reports_checks below) rather than relying on this
+# role default alone - roles/linuxdb_dashboard's config.py.j2 reads the
+# same variable name but runs in a separate play/host group, and role
+# defaults only carry forward as hostvars for hosts that actually ran
+# THIS role earlier in the same invocation. If you change this value,
+# change it in group_vars/all/linuxdb_dashboard.yml, not just here.
+linuxdb_reports_data_dir: "/linuxdb/reports"
+
+# Scratch location on each MANAGED host where the check script is
+# copied to run, then removed again immediately after.
+linuxdb_reports_remote_tmp: "/var/tmp"
+
+# How many timestamped runs to retain per host per check before older
+# ones are pruned. Sizing note: svr_check/df_check/proc_check output is
+# typically a few KB per run; system_stats a similar order. 30 runs per
+# check per host is a small footprint even across a large linuxdb.
+linuxdb_reports_keep_runs: 30
+
+# The check registry. To add a new check, add ONE entry here plus its
+# script under files/ — nothing else in this role needs to change.
+#   key    : unique id, becomes the subdirectory name / dashboard tab id
+#   label  : human-readable name shown in the dashboard
+#   script : filename under roles/linuxdb_reports/files/
+linuxdb_reports_checks:
+  - key: df_check
+    label: "Disk & Filesystem"
+    script: df_check.sh
+
+  - key: proc_check
+    label: "Processes"
+    script: proc_check.sh
+
+  - key: svr_check
+    label: "Server Health"
+    script: svr_check.sh
+
+  - key: system_stats
+    label: "System & Hardware Info"
+    script: system_stats.sh
+
+  - key: dnf_updates
+    label: "Updates"
+    script: dnf_updates.sh
+
+  - key: rpm_report
+    label: "Installed Packages"
+    script: rpm_report.sh

@@ -1,0 +1,80 @@
+---
+# playbooks/linuxdb_dashboard.yml
+#
+# LinuxDB-wide diagnostic history collection, plus a read-only web
+# dashboard for browsing it alongside hostinfo.csv.
+# See roles/linuxdb_reports/README.md and roles/linuxdb_dashboard/README.md
+# for full variable references.
+#
+# Inventory expects two groups (same ones used by centralized_logging.yml):
+#   [log_collector]  - exactly ONE host: runs the dashboard web UI and
+#                       stores all collected report history (normally
+#                       admin1, the control node)
+#   [log_clients]    - every host to collect diagnostics from
+#
+# hostinfo.csv itself is produced separately by playbooks/hostinfo.yml
+# (run that first, or on its own schedule) - this playbook only collects
+# the df_check/proc_check/svr_check/system_stats history and serves the
+# dashboard that displays both.
+#
+# Usage:
+#   ansible-playbook playbooks/linuxdb_dashboard.yml
+#
+#   # linuxdb_reports_enabled / linuxdb_dashboard_enabled / config_snapshot_enabled
+#   # default to true in this repo's group_vars/all/linuxdb_dashboard.yml
+#   # (each role's own internal default is false), so a plain run above
+#   # collects fresh diagnostics, captures config files, AND (re)deploys
+#   # the dashboard. To run just one part:
+#   ansible-playbook playbooks/linuxdb_dashboard.yml --tags linuxdb_reports
+#   ansible-playbook playbooks/linuxdb_dashboard.yml --tags config_snapshot
+#   ansible-playbook playbooks/linuxdb_dashboard.yml --tags linuxdb_dashboard_ui
+#
+#   # Collect from one host only:
+#   ansible-playbook playbooks/linuxdb_dashboard.yml --tags linuxdb_reports --limit admin1
+#
+# What it does:
+#   - linuxdb_reports   : runs df_check/proc_check/svr_check/system_stats
+#                        against every host in log_clients, saving
+#                        timestamped output + exit codes on the control
+#                        node under linuxdb_reports_data_dir.
+#   - config_snapshot   : read-only capture of a curated list of config
+#                        files (RHEL/OL 7-10) from every host in
+#                        log_clients, saved as timestamped snapshots +
+#                        sha256 sidecars on the control node under
+#                        config_snapshot_data_dir, so they can be
+#                        browsed - and compared run-to-run - without
+#                        logging into the servers.
+#   - linuxdb_dashboard : deploys the read-only web UI (systemd service,
+#                        no httpd, no Flask) on log_collector, showing
+#                        hostinfo.csv plus the linuxdb_reports history
+#                        and the config_snapshot history, with per-host
+#                        drill-down.
+
+- name: Collect linuxdb-wide diagnostic history and config file snapshots
+  hosts: log_clients
+  gather_facts: true
+  become: true
+  tags:
+    - linuxdb_dashboard
+    - linuxdb_reports
+
+  roles:
+    - role: linuxdb_reports
+      when: linuxdb_reports_enabled | default(false) | bool
+
+    - role: config_snapshot
+      when: config_snapshot_enabled | default(false) | bool
+      tags:
+        - config_snapshot
+
+- name: Deploy the linuxdb dashboard web UI
+  hosts: log_collector
+  gather_facts: true
+  become: true
+  tags:
+    - linuxdb_dashboard
+    - linuxdb_dashboard_ui
+
+  roles:
+    - role: linuxdb_dashboard
+      when: linuxdb_dashboard_enabled | default(false) | bool

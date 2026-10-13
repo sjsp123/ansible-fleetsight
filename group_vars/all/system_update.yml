@@ -1,0 +1,12 @@
+---
+# group_vars/all/system_update.yml
+# Fleet-wide overrides for roles/system_update (see role defaults for the
+# full list of variables and comments). Uncomment/edit as needed — this
+# follows the same pattern as group_vars/all/host_checks.yml.
+
+# system_update_reboot_enabled: true
+# system_update_security_only: false
+# system_update_autoremove: true
+# system_update_exclude:
+#   - kernel*
+#   - code

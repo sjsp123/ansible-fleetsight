@@ -1,0 +1,31 @@
+# Managed by Ansible (roles/log_search_ui) - do not edit by hand.
+#
+# Serves app.py using Python's own stdlib wsgiref.simple_server - no
+# httpd, no mod_wsgi, no third-party packages beyond python3-psycopg2
+# (already required by app.py itself for talking to PostgreSQL).
+
+[Unit]
+Description=Log Search UI (stdlib WSGI server, no httpd)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User={{ log_search_ui_user }}
+Group={{ log_search_ui_user }}
+Environment=LOG_SEARCH_UI_APP_DIR={{ log_search_ui_app_dir }}
+Environment=LOG_SEARCH_UI_HOST=0.0.0.0
+Environment=LOG_SEARCH_UI_PORT={{ log_search_ui_port }}
+ExecStart=/usr/bin/python3 {{ log_search_ui_app_dir }}/wsgi_standalone_server.py
+Restart=on-failure
+RestartSec=3
+
+# Hardening: this process only needs to read its own app directory and
+# talk to PostgreSQL over TCP - no filesystem writes, no other privileges.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

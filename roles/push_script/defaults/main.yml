@@ -1,0 +1,7 @@
+---
+push_script_src: ""
+push_script_dest: "/var/tmp"
+push_script_mode: "0755"
+push_script_run: true
+push_script_command: ""
+push_script_cleanup: false

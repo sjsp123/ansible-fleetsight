@@ -1,0 +1,7 @@
+---
+- name: Restart linuxdb-dashboard
+  ansible.builtin.systemd:
+    name: linuxdb-dashboard
+    state: restarted
+    daemon_reload: true
+  become: true

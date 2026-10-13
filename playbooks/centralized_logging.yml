@@ -1,0 +1,521 @@
+---
+# playbooks/centralized_logging.yml
+#
+# Rsyslog/journald centralized log forwarding baseline, plus an OPT-IN
+# database + search web front end for searching log messages by pattern
+# instead of grepping flat files across the fleet.
+# See roles/rsyslog_collector/README.md, roles/rsyslog_client/README.md,
+# roles/log_db/README.md, roles/log_search_ui/README.md,
+# roles/log_alerter/README.md, roles/service_failure_watcher/README.md,
+# roles/host_availability_watcher/README.md, roles/disk_space_check/README.md,
+# roles/disk_space_watcher/README.md, roles/chrony_check/README.md and
+# roles/chrony_watcher/README.md for full variable references.
+#
+# Inventory expects two groups:
+#   [log_collector]  - exactly ONE host: the central log receiver
+#   [log_clients]    - every host that should ship its logs to the collector
+#
+# Requirements:
+#   ansible-galaxy collection install -r requirements.yml
+#   (ansible.posix and community.postgresql)
+#
+# Usage:
+#   ansible-playbook playbooks/centralized_logging.yml
+#   ansible-playbook playbooks/centralized_logging.yml -e rsyslog_collector_port=6514
+#   # Encrypt the client -> collector transport with TLS (server-only,
+#   # self-signed lab CA auto-generated on first run - see
+#   # roles/rsyslog_collector/README.md and roles/rsyslog_client/README.md):
+#   ansible-playbook playbooks/centralized_logging.yml -e rsyslog_tls_enabled=true
+#
+#   # log_db_enabled / rsyslog_collector_db_enabled / log_search_ui_enabled /
+#   # log_alerter_enabled / service_failure_watcher_enabled /
+#   # host_availability_watcher_enabled / disk_space_check_enabled /
+#   # disk_space_watcher_enabled / chrony_check_enabled /
+#   # chrony_watcher_enabled all default to true in this repo's
+#   # group_vars/all/log_db.yml, group_vars/all/service_failure_watcher.yml,
+#   # group_vars/all/host_availability_watcher.yml,
+#   # group_vars/all/disk_space_check.yml,
+#   # group_vars/all/disk_space_watcher.yml,
+#   # group_vars/all/chrony_check.yml and group_vars/all/chrony_watcher.yml
+#   # (each role's own internal default is false), so a plain run above
+#   # ALSO sets up the log database, search UI, event alerter, fleet-wide
+#   # failure watcher, the ping/SSH heartbeat watcher, disk-space/inode
+#   # threshold email alerting, and NTP/chrony health email alerting. To
+#   # skip that layer for a given run/host instead:
+#   ansible-playbook playbooks/centralized_logging.yml \
+#     -e log_db_enabled=false -e log_search_ui_enabled=false \
+#     -e rsyslog_collector_db_enabled=false -e log_alerter_enabled=false \
+#     -e service_failure_watcher_enabled=false \
+#     -e host_availability_watcher_enabled=false \
+#     -e disk_space_check_enabled=false -e disk_space_watcher_enabled=false \
+#     -e chrony_check_enabled=false -e chrony_watcher_enabled=false
+#
+# What it does:
+#   - log_db                 : sets up a local PostgreSQL database
+#                               (log_db_enabled) to store log messages for
+#                               pattern search.
+#   - log_collector          : opens a TCP syslog listener (default port
+#                               6514) and stores incoming logs per source
+#                               host under /var/log/remote/<hostname>/<program>.log.
+#                               When rsyslog_collector_db_enabled is true,
+#                               ALSO writes every message into the log_db
+#                               database, alongside the flat files - not
+#                               instead of them.
+#   - log_search_ui          : deploys a small, dependency-free WSGI
+#                               search web front end (log_search_ui_enabled),
+#                               served by Python's own multi-threaded
+#                               stdlib WSGI server (no httpd, no mod_wsgi,
+#                               no Flask) for querying the log_db database
+#                               by message pattern, host, tag, and date
+#                               range, with pagination (results-per-page
+#                               pulldown, Previous/Next) - see
+#                               roles/log_search_ui/README.md.
+#   - log_alerter             : polls log_db on a short systemd timer
+#                               (log_alerter_enabled) and emails one
+#                               batched summary whenever new rows arrive
+#                               at or above a configurable severity - see
+#                               roles/log_alerter/README.md.
+#   - service_failure_watcher : polls log_db on a short systemd timer
+#                               (service_failure_watcher_enabled), runs
+#                               ONLY on log_collector, and emails a
+#                               summary the moment ANY systemd unit on
+#                               ANY log_clients host fails - no per-host
+#                               mail relay needed. Replaces the retired
+#                               playbooks/service_failure_alert.yml - see
+#                               roles/service_failure_watcher/README.md.
+#   - host_availability_watcher : actively pings + TCP-checks the SSH
+#                               port of every log_clients host FROM
+#                               log_collector on a short systemd timer
+#                               (host_availability_watcher_enabled),
+#                               with no dependency on the log pipeline
+#                               at all - the only one of these watchers
+#                               that can detect a host that has gone
+#                               completely unreachable (powered off,
+#                               hung, network partition, etc.), since a
+#                               fully dead host cannot log anything
+#                               about its own outage - see
+#                               roles/host_availability_watcher/README.md.
+#   - disk_space_check        : local, stdlib-only disk-space AND inode
+#                               utilisation checking on EVERY log_clients
+#                               host (disk_space_check_enabled), on a
+#                               longer systemd timer (default 5min).
+#                               Logs one syslog message per threshold
+#                               breach (WARNING/CRITICAL, same 85/95
+#                               defaults as the dashboard's df_check.sh)
+#                               - never emails anything itself - see
+#                               roles/disk_space_check/README.md.
+#   - disk_space_watcher      : polls log_db on a short systemd timer
+#                               (disk_space_watcher_enabled), runs ONLY
+#                               on log_collector, and emails a batched
+#                               summary the moment ANY log_clients host
+#                               logs a new disk_space_check threshold
+#                               breach - no per-host mail relay needed -
+#                               see roles/disk_space_watcher/README.md.
+#   - chrony_check            : local, stdlib-only NTP/chrony health
+#                               checking on EVERY log_clients host
+#                               (chrony_check_enabled), on a longer
+#                               systemd timer (default 15min) - flags
+#                               NTP not synchronized, chronyd not
+#                               active, and abnormal chrony leap status.
+#                               Logs one syslog message per breach
+#                               (WARNING) - never emails anything
+#                               itself - see roles/chrony_check/README.md.
+#   - chrony_watcher          : polls log_db on a short systemd timer
+#                               (chrony_watcher_enabled), runs ONLY on
+#                               log_collector, and emails a batched
+#                               summary the moment ANY log_clients host
+#                               logs a new chrony_check breach - no
+#                               per-host mail relay needed - see
+#                               roles/chrony_watcher/README.md.
+#   - log_clients            : keeps logging locally AND forwards every
+#                               message to the collector over TCP with an
+#                               on-disk retry queue (so a network blip
+#                               doesn't drop messages), and enables
+#                               persistent journald storage.
+#   - verification           : each client sends a uniquely-tagged test
+#                               message, then the collector checks (with
+#                               retries) that it actually arrived, giving
+#                               an automated end-to-end proof that
+#                               forwarding is working - not just that
+#                               config was deployed. Skip with
+#                               -e rsyslog_forwarding_test_enabled=false.
+
+- name: Configure central log database
+  hosts: log_collector
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - log_db
+
+  roles:
+    - role: log_db
+      when: log_db_enabled | default(false) | bool
+
+- name: Configure central log collector
+  hosts: log_collector
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - log_collector
+
+  roles:
+    - role: rsyslog_collector
+
+- name: Configure log search web front end
+  hosts: log_collector
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - log_search_ui
+
+  roles:
+    - role: log_search_ui
+      when: log_search_ui_enabled | default(false) | bool
+
+- name: Configure log event alerting
+  hosts: log_collector
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - log_alerter
+
+  roles:
+    - role: log_alerter
+      when: log_alerter_enabled | default(false) | bool
+
+  tasks:
+    - name: Check whether the log-alerter timer unit exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/log-alerter.timer
+      register: log_alerter_timer_unit
+      when: not (log_alerter_enabled | default(false) | bool)
+
+    - name: Stop and disable log-alerter timer when alerting is turned off
+      ansible.builtin.systemd:
+        name: log-alerter.timer
+        state: stopped
+        enabled: false
+      become: true
+      when:
+        - not (log_alerter_enabled | default(false) | bool)
+        - log_alerter_timer_unit.stat.exists | default(false)
+
+- name: Configure centralized systemd unit failure watching
+  hosts: log_collector
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - service_failure_watcher
+
+  roles:
+    - role: service_failure_watcher
+      when: service_failure_watcher_enabled | default(false) | bool
+
+  tasks:
+    - name: Check whether the service-failure-watcher timer unit exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/service-failure-watcher.timer
+      register: service_failure_watcher_timer_unit
+      when: not (service_failure_watcher_enabled | default(false) | bool)
+
+    - name: Stop and disable service-failure-watcher timer when watching is turned off
+      ansible.builtin.systemd:
+        name: service-failure-watcher.timer
+        state: stopped
+        enabled: false
+      become: true
+      when:
+        - not (service_failure_watcher_enabled | default(false) | bool)
+        - service_failure_watcher_timer_unit.stat.exists | default(false)
+
+- name: Configure active host-down (ping/SSH) heartbeat watching
+  hosts: log_collector
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - host_availability_watcher
+
+  roles:
+    - role: host_availability_watcher
+      when: host_availability_watcher_enabled | default(false) | bool
+
+  tasks:
+    - name: Check whether the host-availability-watcher timer unit exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/host-availability-watcher.timer
+      register: host_availability_watcher_timer_unit
+      when: not (host_availability_watcher_enabled | default(false) | bool)
+
+    - name: Stop and disable host-availability-watcher timer when watching is turned off
+      ansible.builtin.systemd:
+        name: host-availability-watcher.timer
+        state: stopped
+        enabled: false
+      become: true
+      when:
+        - not (host_availability_watcher_enabled | default(false) | bool)
+        - host_availability_watcher_timer_unit.stat.exists | default(false)
+
+- name: Configure log-forwarding clients
+  hosts: log_clients
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - log_clients
+
+  roles:
+    - role: rsyslog_client
+
+- name: Configure local disk/inode space checking
+  hosts: log_clients
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - disk_space_check
+
+  roles:
+    - role: disk_space_check
+      when: disk_space_check_enabled | default(false) | bool
+
+  tasks:
+    - name: Check whether the disk-space-check timer unit exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/disk-space-check.timer
+      register: disk_space_check_timer_unit
+      when: not (disk_space_check_enabled | default(false) | bool)
+
+    - name: Stop and disable disk-space-check timer when checking is turned off
+      ansible.builtin.systemd:
+        name: disk-space-check.timer
+        state: stopped
+        enabled: false
+      become: true
+      when:
+        - not (disk_space_check_enabled | default(false) | bool)
+        - disk_space_check_timer_unit.stat.exists | default(false)
+
+- name: Configure centralized disk/inode space watching
+  hosts: log_collector
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - disk_space_watcher
+
+  roles:
+    - role: disk_space_watcher
+      when: disk_space_watcher_enabled | default(false) | bool
+
+  tasks:
+    - name: Check whether the disk-space-watcher timer unit exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/disk-space-watcher.timer
+      register: disk_space_watcher_timer_unit
+      when: not (disk_space_watcher_enabled | default(false) | bool)
+
+    - name: Stop and disable disk-space-watcher timer when watching is turned off
+      ansible.builtin.systemd:
+        name: disk-space-watcher.timer
+        state: stopped
+        enabled: false
+      become: true
+      when:
+        - not (disk_space_watcher_enabled | default(false) | bool)
+        - disk_space_watcher_timer_unit.stat.exists | default(false)
+
+- name: Configure local NTP/chrony health checking
+  hosts: log_clients
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - chrony_check
+
+  roles:
+    - role: chrony_check
+      when: chrony_check_enabled | default(false) | bool
+
+  tasks:
+    - name: Check whether the chrony-check timer unit exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/chrony-check.timer
+      register: chrony_check_timer_unit
+      when: not (chrony_check_enabled | default(false) | bool)
+
+    - name: Stop and disable chrony-check timer when checking is turned off
+      ansible.builtin.systemd:
+        name: chrony-check.timer
+        state: stopped
+        enabled: false
+      become: true
+      when:
+        - not (chrony_check_enabled | default(false) | bool)
+        - chrony_check_timer_unit.stat.exists | default(false)
+
+- name: Configure centralized NTP/chrony health watching
+  hosts: log_collector
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - chrony_watcher
+
+  roles:
+    - role: chrony_watcher
+      when: chrony_watcher_enabled | default(false) | bool
+
+  tasks:
+    - name: Check whether the chrony-watcher timer unit exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/chrony-watcher.timer
+      register: chrony_watcher_timer_unit
+      when: not (chrony_watcher_enabled | default(false) | bool)
+
+    - name: Stop and disable chrony-watcher timer when watching is turned off
+      ansible.builtin.systemd:
+        name: chrony-watcher.timer
+        state: stopped
+        enabled: false
+      become: true
+      when:
+        - not (chrony_watcher_enabled | default(false) | bool)
+        - chrony_watcher_timer_unit.stat.exists | default(false)
+
+- name: Configure local IdM health checking
+  hosts: idm
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - idm_healthcheck_watch
+
+  roles:
+    - role: idm_healthcheck_watch
+      when: idm_healthcheck_watch_enabled | default(false) | bool
+
+  tasks:
+    - name: Check whether the idm-healthcheck-watch timer unit exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/idm-healthcheck-watch.timer
+      register: idm_healthcheck_watch_timer_unit
+      when: not (idm_healthcheck_watch_enabled | default(false) | bool)
+
+    - name: Stop and disable idm-healthcheck-watch timer when checking is turned off
+      ansible.builtin.systemd:
+        name: idm-healthcheck-watch.timer
+        state: stopped
+        enabled: false
+      become: true
+      when:
+        - not (idm_healthcheck_watch_enabled | default(false) | bool)
+        - idm_healthcheck_watch_timer_unit.stat.exists | default(false)
+
+- name: Configure centralized IdM health watching
+  hosts: log_collector
+  gather_facts: true
+  become: true
+  tags:
+    - logging
+    - idm_healthcheck_watcher
+
+  roles:
+    - role: idm_healthcheck_watcher
+      when: idm_healthcheck_watcher_enabled | default(false) | bool
+
+  tasks:
+    - name: Check whether the idm-healthcheck-watcher timer unit exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/idm-healthcheck-watcher.timer
+      register: idm_healthcheck_watcher_timer_unit
+      when: not (idm_healthcheck_watcher_enabled | default(false) | bool)
+
+    - name: Stop and disable idm-healthcheck-watcher timer when watching is turned off
+      ansible.builtin.systemd:
+        name: idm-healthcheck-watcher.timer
+        state: stopped
+        enabled: false
+      become: true
+      when:
+        - not (idm_healthcheck_watcher_enabled | default(false) | bool)
+        - idm_healthcheck_watcher_timer_unit.stat.exists | default(false)
+
+- name: Verify end-to-end log forwarding from clients
+  hosts: log_collector
+  gather_facts: false
+  become: true
+  tags:
+    - logging
+    - log_forwarding_check
+  vars:
+    rsyslog_remote_log_dir: /var/log/remote
+    rsyslog_forwarding_test_tag: rsyslog_forwarding_test
+    rsyslog_forwarding_test_enabled: true
+    rsyslog_forwarding_check_retries: 6
+    rsyslog_forwarding_check_delay: 5
+
+  tasks:
+    # Only check hosts that actually ran the client role THIS invocation -
+    # groups['log_clients'] always lists every inventory member regardless
+    # of --limit, but hostvars only has rsyslog_forwarding_test_token (set
+    # by roles/rsyslog_client) for hosts that were actually targeted this
+    # run. Without this filter, running with e.g. --limit on just the
+    # collector (as shown in README.md's opt-in log_db/log_search_ui
+    # rollout examples) would crash here on undefined hostvars for the
+    # clients that were skipped.
+    - name: Determine which log_clients hosts actually ran in this invocation
+      ansible.builtin.set_fact:
+        rsyslog_forwarding_check_targets: >-
+          {{ groups['log_clients']
+             | map('extract', hostvars)
+             | selectattr('rsyslog_forwarding_test_token', 'defined')
+             | map(attribute='inventory_hostname')
+             | list }}
+      when: rsyslog_forwarding_test_enabled | bool
+
+    - name: Check each client's test message arrived on the collector
+      ansible.builtin.command:
+        cmd: >-
+          grep -q "rsyslog_forwarding_test_token={{ hostvars[item].rsyslog_forwarding_test_token }}"
+          {{ rsyslog_remote_log_dir }}/{{ hostvars[item].ansible_hostname }}/{{ rsyslog_forwarding_test_tag }}.log
+      register: rsyslog_forwarding_check
+      loop: "{{ rsyslog_forwarding_check_targets | default([]) }}"
+      retries: "{{ rsyslog_forwarding_check_retries }}"
+      delay: "{{ rsyslog_forwarding_check_delay }}"
+      until: rsyslog_forwarding_check.rc == 0
+      changed_when: false
+      failed_when: false
+      when: rsyslog_forwarding_test_enabled | bool
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Report end-to-end forwarding verification results
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item }}:
+          {{ 'FORWARDING CONFIRMED - test message arrived on the collector.'
+          if item.rc == 0 else
+          'FORWARDING NOT CONFIRMED - test message did not arrive within the retry window ('
+          ~ (rsyslog_forwarding_check_retries | int * rsyslog_forwarding_check_delay | int)
+          ~ 's). Check network connectivity, firewalld, and rsyslog on ' ~ item.item ~ '.' }}
+      loop: "{{ rsyslog_forwarding_check.results }}"
+      when: rsyslog_forwarding_test_enabled | bool
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Fail if any client's forwarding test did not arrive
+      ansible.builtin.assert:
+        that:
+          - rsyslog_forwarding_check.results | selectattr('rc', 'ne', 0) | list | length == 0
+        success_msg: "End-to-end log forwarding CONFIRMED for all log_clients hosts."
+        fail_msg: >-
+          End-to-end log forwarding FAILED for:
+          {{ rsyslog_forwarding_check.results | selectattr('rc', 'ne', 0) | map(attribute='item') | join(', ') }}
+      when: rsyslog_forwarding_test_enabled | bool

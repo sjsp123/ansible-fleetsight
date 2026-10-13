@@ -1,0 +1,63 @@
+---
+# All writes below target the log_collector host explicitly (via the
+# inventory group), not delegate_to: localhost. Under ansible-core CLI
+# from admin1 this resolves to the same host either way (admin1 IS
+# log_collector today), but delegate_to: localhost breaks under AAP,
+# where "localhost" is the throwaway execution-environment container the
+# job happens to run in, not a persistent collector host - the CSV would
+# be written into a container that's destroyed when the job ends, and
+# linuxdb_dashboard (which reads from the real collector host) would
+# never see it. Falls back to literal localhost only if the inventory
+# has no log_collector group defined (e.g. an ad-hoc host list).
+- name: Ensure output directory exists
+  file:
+    path: "{{ host_report_csv_path }}"
+    state: directory
+    mode: "0755"
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+
+- name: Ensure hostinfo history directory exists
+  file:
+    path: "{{ host_report_csv_path }}/history"
+    state: directory
+    mode: "0755"
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+
+- name: Generate timestamp
+  set_fact:
+    report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+
+- name: Generate CSV report
+  template:
+    src: hostinfo.csv.j2
+    dest: "{{ host_report_csv_path }}/hostinfo.csv"
+    mode: "0644"
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+
+- name: Save a timestamped snapshot of this run for history
+  copy:
+    src: "{{ host_report_csv_path }}/hostinfo.csv"
+    dest: "{{ host_report_csv_path }}/history/hostinfo_{{ report_timestamp }}.csv"
+    remote_src: true
+    mode: "0644"
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+
+- name: Prune old hostinfo history beyond host_report_keep_runs
+  shell: >
+    set -o pipefail;
+    cd {{ (host_report_csv_path ~ '/history') | quote }} &&
+    ls -1 -- hostinfo_*.csv 2>/dev/null | sort |
+    head -n -{{ host_report_keep_runs }} |
+    xargs -r rm -f --
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+  changed_when: false
+
+- name: Report generated
+  debug:
+    msg: >-
+      Report written to {{ host_report_csv_path }}/hostinfo.csv
+      (snapshot saved to history/hostinfo_{{ report_timestamp }}.csv)
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"

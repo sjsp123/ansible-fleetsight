@@ -1,0 +1,10 @@
+# Managed by Ansible (roles/idm_healthcheck_watcher) - do not edit by hand.
+[Unit]
+Description=Poll log_db for new IdM healthcheck findings fleet-wide and email a summary
+After=network.target postgresql.service
+
+[Service]
+Type=oneshot
+User={{ idm_healthcheck_watcher_user }}
+WorkingDirectory={{ idm_healthcheck_watcher_app_dir }}
+ExecStart=/usr/bin/python3 {{ idm_healthcheck_watcher_app_dir }}/idm_healthcheck_watcher.py

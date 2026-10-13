@@ -1,0 +1,72 @@
+<svg viewBox="0 0 720 410" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Execution order of roles inside playbooks/centralized_logging.yml, colored by which inventory group each role targets.</title>
+<desc>Fourteen sequential steps: core log_collector services, watcher/alerter roles, log_clients-side checks interleaved with their collector-side watchers, the IdM health-check pair, and a final forwarding-verification play.</desc>
+<rect width="100%" height="100%" fill="#F7F6F2"/>
+
+<line x1="40" y1="28" x2="40" y2="360" stroke="#E4E2DC" stroke-width="0.5"/>
+
+<circle cx="40" cy="40" r="4" fill="#01696F"/>
+<text x="28" y="44" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">1</text>
+<text x="58" y="44" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">log_db</text>
+
+<circle cx="40" cy="64" r="4" fill="#01696F"/>
+<text x="28" y="68" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">2</text>
+<text x="58" y="68" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">rsyslog_collector</text>
+
+<circle cx="40" cy="88" r="4" fill="#01696F"/>
+<text x="28" y="92" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">3</text>
+<text x="58" y="92" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">log_search_ui</text>
+
+<circle cx="40" cy="112" r="4" fill="#01696F"/>
+<text x="28" y="116" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">4</text>
+<text x="58" y="116" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">log_alerter</text>
+
+<circle cx="40" cy="136" r="4" fill="#01696F"/>
+<text x="28" y="140" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">5</text>
+<text x="58" y="140" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">service_failure_watcher</text>
+
+<circle cx="40" cy="160" r="4" fill="#01696F"/>
+<text x="28" y="164" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">6</text>
+<text x="58" y="164" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">host_availability_watcher</text>
+<text x="290" y="164" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">(active probe, no log_db dep)</text>
+
+<circle cx="40" cy="184" r="4" fill="#964219"/>
+<text x="28" y="188" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">7</text>
+<text x="58" y="188" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">rsyslog_client</text>
+
+<circle cx="40" cy="208" r="4" fill="#964219"/>
+<text x="28" y="212" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">8</text>
+<text x="58" y="212" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">disk_space_check</text>
+
+<circle cx="40" cy="232" r="4" fill="#01696F"/>
+<text x="28" y="236" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">9</text>
+<text x="58" y="236" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">disk_space_watcher</text>
+
+<circle cx="40" cy="256" r="4" fill="#964219"/>
+<text x="28" y="260" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">10</text>
+<text x="58" y="260" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">chrony_check</text>
+
+<circle cx="40" cy="280" r="4" fill="#01696F"/>
+<text x="28" y="284" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">11</text>
+<text x="58" y="284" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">chrony_watcher</text>
+
+<circle cx="40" cy="304" r="4" fill="#7A39BB"/>
+<text x="28" y="308" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">12</text>
+<text x="58" y="308" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">idm_healthcheck_watch</text>
+
+<circle cx="40" cy="328" r="4" fill="#01696F"/>
+<text x="28" y="332" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">13</text>
+<text x="58" y="332" font-size="12" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">idm_healthcheck_watcher</text>
+
+<circle cx="40" cy="352" r="4" fill="#01696F"/>
+<text x="28" y="356" text-anchor="end" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">14</text>
+<text x="58" y="356" font-size="12" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">forwarding verification (not a role)</text>
+<text x="330" y="356" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">fails play if any client missed</text>
+
+<circle cx="40" cy="386" r="4" fill="#01696F"/>
+<text x="50" y="390" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">log_collector</text>
+<circle cx="180" cy="386" r="4" fill="#964219"/>
+<text x="190" y="390" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">log_clients</text>
+<circle cx="300" cy="386" r="4" fill="#7A39BB"/>
+<text x="310" y="390" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">idm</text>
+</svg>

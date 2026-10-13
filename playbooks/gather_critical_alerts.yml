@@ -1,0 +1,162 @@
+---
+- name: Prompt for target host/group
+  hosts: localhost
+  gather_facts: false
+
+  vars_prompt:
+    - name: target_host
+      prompt: "Enter target host or inventory group"
+      private: no
+      default: "all"
+      # default lets an interactive run just press Enter for the common
+      # case. For unattended/cron runs, ALWAYS pass -e target_host=all
+      # (or a specific group) explicitly rather than relying on this
+      # default alone - Ansible skips vars_prompt entirely when the var
+      # is already supplied via --extra-vars, which is the reliable,
+      # version-proof way to guarantee a non-interactive run never blocks
+      # waiting on a stdin prompt that cron can't answer.
+
+  tasks:
+    - name: Add selected hosts to dynamic group
+      add_host:
+        name: "{{ item }}"
+        groups: selected_hosts
+      loop: "{{ query('inventory_hostnames', target_host) }}"
+
+- name: Critical Alerts Report
+  hosts: selected_hosts
+  gather_facts: false
+  become: true
+
+  tasks:
+
+    - name: Search suspicious journal events
+      shell: |
+        journalctl --since "30 days ago" --no-pager | \
+        egrep -i "panic|oom|out of memory|segfault|failed|error|critical|denied|corrupt"
+      register: findings
+      changed_when: false
+      failed_when: false
+
+    - name: Capture critical journal events
+      shell: |
+        journalctl --since "30 days ago" -p 0..3 --no-pager
+      register: critical_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Count critical journal events
+      shell: |
+        journalctl --since "30 days ago" -p 0..3 --no-pager | wc -l
+      register: critical_count
+      changed_when: false
+      failed_when: false
+
+    - name: Capture failed services
+      shell: |
+        systemctl --failed --no-pager --plain
+      register: failed_services
+      changed_when: false
+      failed_when: false
+
+    - name: Count failed services
+      shell: |
+        systemctl --failed --no-pager --plain | grep -c loaded || true
+      register: failed_service_count
+      changed_when: false
+      failed_when: false
+
+    - name: Capture kernel issues
+      shell: |
+        journalctl -k --since "30 days ago" | \
+        egrep -i "panic|oops|segfault|oom|call trace|i/o error|filesystem"
+      register: kernel_issues
+      changed_when: false
+      failed_when: false
+
+    - name: Capture authentication failures
+      shell: |
+        journalctl --since "30 days ago" | \
+        egrep -i "failed password|authentication failure|invalid user"
+      register: auth_failures
+      changed_when: false
+      failed_when: false
+
+    - name: Capture disk and filesystem errors
+      shell: |
+        dmesg -T | \
+        egrep -i "i/o error|buffer i/o error|ext4.*error|xfs.*error|filesystem"
+      register: disk_errors
+      changed_when: false
+      failed_when: false
+
+    - name: Capture recent reboot history
+      shell: |
+        last -x | head -20
+      register: reboots
+      changed_when: false
+      failed_when: false
+
+    - name: Create report directories
+      delegate_to: localhost
+      file:
+        path: "/var/tmp/server-findings/hosts"
+        state: directory
+        mode: "0755"
+
+    - name: Save individual host report
+      delegate_to: localhost
+      copy:
+        dest: "/var/tmp/server-findings/hosts/{{ inventory_hostname }}.txt"
+        mode: "0644"
+        content: |
+          ==================================================
+          HOST: {{ inventory_hostname }}
+          ==================================================
+
+          SUMMARY
+          --------------------------------------------------
+          Critical Journal Events : {{ critical_count.stdout | trim }}
+          Failed Services         : {{ failed_service_count.stdout | trim }}
+
+          FAILED SERVICES
+          --------------------------------------------------
+          {{ failed_services.stdout | default('None found', true) }}
+
+          KERNEL ISSUES
+          --------------------------------------------------
+          {{ kernel_issues.stdout | default('None found', true) }}
+
+          AUTHENTICATION FAILURES
+          --------------------------------------------------
+          {{ auth_failures.stdout | default('None found', true) }}
+
+          DISK / FILESYSTEM ERRORS
+          --------------------------------------------------
+          {{ disk_errors.stdout | default('None found', true) }}
+
+          RECENT REBOOTS
+          --------------------------------------------------
+          {{ reboots.stdout | default('None found', true) }}
+
+          CRITICAL JOURNAL EVENTS (Priority 0-3)
+          --------------------------------------------------
+          {{ critical_logs.stdout | default('None found', true) }}
+
+          SUSPICIOUS EVENTS
+          --------------------------------------------------
+          {{ findings.stdout | default('None found', true) }}
+
+    - name: Build consolidated report
+      run_once: true
+      delegate_to: localhost
+      assemble:
+        src: /var/tmp/server-findings/hosts
+        dest: /var/tmp/server-findings/monthly_linux_health_report.txt
+        mode: "0644"
+
+    - name: Display report location
+      run_once: true
+      delegate_to: localhost
+      debug:
+        msg: "Consolidated report created: /var/tmp/server-findings/monthly_linux_health_report.txt"

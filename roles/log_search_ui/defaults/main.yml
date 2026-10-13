@@ -1,0 +1,198 @@
+---
+# roles/log_search_ui/defaults/main.yml
+
+# TCP port the search UI listens on.
+log_search_ui_port: 8081
+
+# Directory the search application is installed into.
+log_search_ui_app_dir: /opt/log_search_ui
+
+# Unprivileged system account the service runs as (created by this
+# role). The service reads its own app directory and talks to
+# PostgreSQL over TCP - nothing else.
+log_search_ui_user: log_search_ui
+
+# Rows per page. The search UI's "Results per page" pulldown offers
+# this value plus 2x/4x/10x multiples of it, so changing this one
+# variable rescales the whole pulldown (e.g. set it to 1000 and the
+# choices become 1000/2000/4000/10000). Also the page size used before
+# the user has ever touched the pulldown.
+log_search_ui_max_results: 500
+
+# Hard safety cap when the search UI's "All" pulldown option is
+# selected (fetches everything matching in one page, no Previous/Next).
+# Independent of log_search_ui_max_results above, which only bounds a
+# single paginated page. Protects the browser (rendering a huge HTML
+# table) and the database (a single very broad query) from an
+# unbounded result set - if a search would return more than this, the
+# UI shows a truncation notice rather than fetching them all.
+log_search_ui_max_results_all: 20000
+
+# Read-only database connection used by the search UI. Default to the
+# matching log_db_* variables (from roles/log_db) so both roles stay in
+# sync automatically as long as you only override the log_db_* versions.
+log_search_ui_db_host: "{{ rsyslog_collector_db_host | default('localhost') }}"
+log_search_ui_db_name: "{{ log_db_name | default('syslog') }}"
+log_search_ui_db_table: "{{ log_db_table | default('systemevents') }}"
+log_search_ui_suppressed_patterns_table: >-
+  {{ log_db_suppressed_patterns_table |
+     default('log_search_ui_suppressed_patterns') }}
+log_search_ui_db_user: "{{ log_db_reader_user | default('log_search') }}"
+log_search_ui_db_password: "{{ log_db_reader_password | default('CHANGE_ME_log_search_reader') }}"
+
+# --- Insights page (/insights) --------------------------------------------
+# Heuristic data insights over a chosen time window: authentication
+# failures, sudo activity, password failures, a severity breakdown, the
+# most repeated/similar alerts, and the top source IPs behind failed SSH
+# logins - each with a rough genuine/review/noise assessment. See the
+# "Insights" section of README.md for exactly how these are computed and
+# their limits (heuristic only, not a SIEM replacement).
+
+# Time window shown by default when a visitor first opens /insights.
+# One of: 1h, 24h, 7d, 30d.
+log_search_ui_insights_default_window: "24h"
+
+# Hard safety cap on how many of the most recent rows (within the chosen
+# window) the "Top repeated / similar alerts" query scans, regardless of
+# how large the window or table actually is. Same safety-cap philosophy
+# as log_search_ui_max_results_all above - protects the database from an
+# unbounded aggregation query on a big table/window.
+log_search_ui_insights_scan_rows: 50000
+
+# Rows shown in the "Top repeated / similar alerts" table.
+log_search_ui_insights_top_alerts: 15
+
+# Rows shown in the "Top source IPs (failed SSH logins)" table.
+log_search_ui_insights_top_ips: 10
+
+# An alert pattern or source IP is flagged "genuine?" (possible
+# brute-force/credential-stuffing) once it reaches this many
+# occurrences/attempts in the window, regardless of how many distinct
+# source IPs or usernames are involved.
+log_search_ui_insights_bruteforce_attempts_threshold: 10
+
+# A source IP trying at least this many distinct usernames is flagged
+# "genuine?" even if its total attempt count is still below
+# log_search_ui_insights_bruteforce_attempts_threshold (classic
+# credential-stuffing shape: many usernames, few attempts each).
+log_search_ui_insights_bruteforce_users_threshold: 3
+
+# An authentication-failure alert pattern seen from at least this many
+# distinct source IPs is flagged "genuine?" even if its total count is
+# still below the bruteforce attempts threshold above (distributed
+# low-and-slow attempt shape).
+log_search_ui_insights_repeat_ip_threshold: 3
+
+# A non-auth alert at Error severity or worse (0-3) recurring at least
+# this many times in the window is flagged "genuine?" (recurring
+# high-severity condition worth investigating), separately from the
+# auth-failure/brute-force checks above.
+log_search_ui_insights_high_severity_repeat_threshold: 5
+
+# A non-auth, non-error alert pattern occurring at most this many times
+# in the window is flagged "likely noise" (below this, and at
+# Informational/Debug severity, it's treated as routine rather than
+# something to review).
+log_search_ui_insights_low_count_threshold: 2
+
+# Rows shown in the "Top sudo activity" table (who ran sudo, which
+# account they became, and what they ran, grouped by user/target/base
+# command). Reuses log_search_ui_insights_scan_rows above as its safety
+# cap on how many recent sudo log rows get scanned - no separate scan-cap
+# variable needed.
+log_search_ui_insights_top_sudo_users: 15
+
+# A given (invoking user, target user, base command) combination is
+# flagged "genuine?" once it repeats at least this many times in the
+# window - e.g. a script or cron job hammering sudo, or a human running
+# the same privileged command far more than usual.
+log_search_ui_insights_sudo_repeat_threshold: 20
+
+# Case-insensitive POSIX regex (passed straight into Python's re module)
+# of command keywords that are always flagged "genuine?" (worth a second
+# look) whenever they're run as the target "USER=root" - account/auth
+# changes, service/firewall control, package changes, and destructive
+# file operations. Purely a review flag, not a block - these commands
+# are never prevented from running, only called out for later review.
+log_search_ui_insights_sudo_sensitive_commands_pattern: "passwd|useradd|userdel|usermod|visudo|/etc/sudoers|systemctl|firewall-cmd|iptables|shutdown|reboot|dnf |yum |rm -rf|chmod|chown|/etc/passwd|/etc/shadow"
+
+# Rows shown in the "Top su activity" table (who ran su and which
+# account they became, grouped by invoking user/target user). su has no
+# per-command log of its own, so there is no equivalent to the sudo
+# sensitive-commands pattern above - just this row cap and the repeat
+# threshold below. Reuses log_search_ui_insights_scan_rows as its
+# safety cap on how many recent su log rows get scanned.
+log_search_ui_insights_top_su_users: 15
+
+# A given (invoking user, target user) combination is flagged
+# "genuine?" once it repeats at least this many times in the window -
+# e.g. a script or cron job hammering su, or a human switching user far
+# more than usual. A single su to root is always at least "review"
+# regardless of this threshold (see assess_su() in app.py) since su
+# grants a full open-ended shell, not one audited command.
+log_search_ui_insights_su_repeat_threshold: 20
+
+# --- Authentication ---------------------------------------------------
+# HTTP Basic Auth in front of the whole app, checked directly in app.py
+# using only the standard library (base64 + hmac) - see the
+# "Authentication" section of README.md. Shared by default with
+# linuxdb_dashboard via group_vars/all/dashboard_auth.yml (one
+# username/password protects both dashboards) - override
+# log_search_ui_auth_user/_password directly here instead if you want
+# this dashboard to use a different credential than linuxdb_dashboard.
+log_search_ui_auth_enabled: true
+log_search_ui_auth_user: "{{ dashboard_auth_user | default('admin') }}"
+log_search_ui_auth_password: "{{ dashboard_auth_password | default('CHANGE_ME_dashboard_admin') }}"
+
+# Kerberos/AD/IdM auth mode (optional) - see the extensive comment
+# block in group_vars/all/dashboard_auth.yml and the "Kerberos
+# authentication mode" section of README.md. Shared by default with
+# linuxdb_dashboard - override log_search_ui_auth_mode/_kerberos_*
+# directly here instead if you want this dashboard to use different
+# Kerberos settings than linuxdb_dashboard.
+log_search_ui_auth_mode: "{{ dashboard_auth_mode | default('local') }}"
+log_search_ui_auth_kerberos_realm: "{{ dashboard_auth_kerberos_realm | default('') }}"
+log_search_ui_auth_kerberos_required_group: "{{ dashboard_auth_kerberos_required_group | default('') }}"
+log_search_ui_auth_kerberos_kinit_path: "{{ dashboard_auth_kerberos_kinit_path | default('/usr/bin/kinit') }}"
+log_search_ui_auth_kerberos_kdestroy_path: "{{ dashboard_auth_kerberos_kdestroy_path | default('/usr/bin/kdestroy') }}"
+log_search_ui_auth_kerberos_getent_path: "{{ dashboard_auth_kerberos_getent_path | default('/usr/bin/getent') }}"
+log_search_ui_auth_kerberos_id_path: "{{ dashboard_auth_kerberos_id_path | default('/usr/bin/id') }}"
+
+# --- TLS ---------------------------------------------------------------
+# TLS for the standalone stdlib WSGI server itself - wrapped directly
+# around the listening socket in wsgi_standalone_server.py using the
+# standard library `ssl` module. No httpd, no mod_ssl, no reverse proxy.
+# A self-signed certificate is generated once on first deploy (if
+# log_search_ui_tls_generate_self_signed is true and no cert already
+# exists at log_search_ui_tls_cert_path) and left alone on every later
+# run - same idempotent "create if missing" pattern used elsewhere in
+# this repo (e.g. log_db's postgresql-setup --initdb).
+log_search_ui_tls_enabled: true
+log_search_ui_tls_generate_self_signed: true
+log_search_ui_tls_cn: "{{ ansible_fqdn | default(ansible_hostname) }}"
+log_search_ui_tls_cert_days: 3650
+log_search_ui_tls_cert_path: "{{ log_search_ui_app_dir }}/tls/log-search-ui.crt"
+log_search_ui_tls_key_path: "{{ log_search_ui_app_dir }}/tls/log-search-ui.key"
+
+# --- Optional cross-app switcher tabs -----------------------------------
+# Purely cosmetic: the Search/Insights tab bar always shows Search and
+# Insights (both live in this app); when set, it also shows a LinuxDB
+# Dashboard tab, a Package Search tab (fleet-wide installed-package
+# search, hosted at /packages on the LinuxDB Dashboard rather than here
+# - same one-app-hosts-it reasoning as Guide below) and/or a Guide tab
+# (to the Operational Support Guide, OPERATIONAL_SUPPORT_GUIDE.md,
+# hosted at /guide on the LinuxDB Dashboard rather than here - one guide
+# covers both apps, so it only needs hosting in one place), so the
+# whole fleet of pages reads as one connected application instead of
+# unrelated tools. Each is independently left blank by default (renders
+# nothing for that tab) so this is safe/reversible and never assumes
+# the other dashboard is even deployed on this host. Set these in
+# group_vars (or here) to enable them, e.g.:
+#   log_search_ui_sibling_app_name: "LinuxDB Dashboard"
+#   log_search_ui_sibling_app_url: "{{ 'https' if linuxdb_dashboard_tls_enabled | default(true) else 'http' }}://{{ ansible_fqdn | default(ansible_hostname) }}:{{ linuxdb_dashboard_port | default(8082) }}/"
+#   log_search_ui_packages_app_url: "{{ 'https' if linuxdb_dashboard_tls_enabled | default(true) else 'http' }}://{{ ansible_fqdn | default(ansible_hostname) }}:{{ linuxdb_dashboard_port | default(8082) }}/packages"
+#   log_search_ui_guide_app_url: "{{ 'https' if linuxdb_dashboard_tls_enabled | default(true) else 'http' }}://{{ ansible_fqdn | default(ansible_hostname) }}:{{ linuxdb_dashboard_port | default(8082) }}/guide"
+log_search_ui_sibling_app_name: ""
+log_search_ui_sibling_app_url: ""
+log_search_ui_packages_app_url: ""
+log_search_ui_guide_app_url: ""

@@ -1,0 +1,13 @@
+---
+- name: Push a script and run it
+  hosts: "{{ target_host }}"
+  gather_facts: true
+  become: true
+
+  vars_prompt:
+    - name: target_host
+      prompt: "Enter target host or inventory group"
+      private: no
+
+  roles:
+    - role: push_script

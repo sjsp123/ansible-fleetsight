@@ -1,0 +1,17 @@
+# Managed by Ansible (roles/chrony_watcher) - do not edit by hand.
+# Kept as a separate settings module from chrony_watcher.py itself,
+# same reasoning as roles/disk_space_watcher's config.py.j2 split.
+
+DB_HOST = "{{ chrony_watcher_db_host }}"
+DB_NAME = "{{ chrony_watcher_db_name }}"
+DB_TABLE = "{{ chrony_watcher_db_table }}"
+DB_USER = "{{ chrony_watcher_db_user }}"
+DB_PASSWORD = "{{ chrony_watcher_db_password }}"
+
+MAX_ROWS_PER_EMAIL = {{ chrony_watcher_max_rows_per_email }}
+STATE_FILE = "{{ chrony_watcher_state_file }}"
+
+EMAIL_TO = {{ chrony_watcher_email_to | to_json }}
+EMAIL_FROM = "{{ chrony_watcher_email_from }}"
+SMTP_HOST = "{{ chrony_watcher_smtp_host }}"
+SMTP_PORT = {{ chrony_watcher_smtp_port }}

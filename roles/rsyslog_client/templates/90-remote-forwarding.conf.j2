@@ -1,0 +1,54 @@
+# Managed by Ansible (roles/rsyslog_client) - do not edit by hand.
+#
+# Forward every local log message (journald included, via rsyslog's
+# imjournal input which is enabled by default on RHEL) to the central
+# collector over TCP. Messages are also kept locally - this does not stop
+# processing, so /var/log/messages etc. on this host are unaffected.
+# An on-disk queue buffers messages if the collector is briefly unreachable.
+
+#
+# Report this host's HOSTNAME field (embedded in every message, and what
+# the collector stores as the fromhost column every watcher app reads)
+# as rsyslog_client_local_hostname (the fully qualified inventory name by
+# default) rather than whatever this box's own hostname happens to be
+# set to - see roles/rsyslog_client/defaults/main.yml for the full
+# rationale. Declared in its own global() block since global() may be
+# used multiple times as long as each sets different parameters.
+global(localHostName="{{ rsyslog_client_local_hostname }}")
+
+{% if rsyslog_tls_enabled | default(false) | bool %}
+#
+# TLS (gtls/GnuTLS driver): this client only trusts the lab CA that signed
+# the collector's certificate (DefaultNetstreamDriverCAFile below), and
+# also checks the certificate's name matches rsyslog_tls_permitted_peer -
+# so even a different host holding a CA-signed cert under a DIFFERENT
+# name would be rejected, not just any cert signed by the trusted CA.
+global(
+    DefaultNetstreamDriverCAFile="{{ rsyslog_tls_ca_cert_path }}"
+)
+
+*.* action(type="omfwd"
+           target="{{ log_collector_host }}"
+           port="{{ rsyslog_collector_port | default(6514) }}"
+           protocol="tcp"
+           StreamDriver="gtls"
+           StreamDriverMode="1"
+           StreamDriverAuthMode="x509/name"
+           StreamDriverPermittedPeers="{{ rsyslog_tls_permitted_peer }}"
+           gnutlsPriorityString="{{ rsyslog_tls_priority_string }}"
+           action.resumeRetryCount="-1"
+           queue.type="linkedList"
+           queue.filename="fwd_queue"
+           queue.maxdiskspace="1g"
+           queue.saveonshutdown="on")
+{% else %}
+*.* action(type="omfwd"
+           target="{{ log_collector_host }}"
+           port="{{ rsyslog_collector_port | default(6514) }}"
+           protocol="tcp"
+           action.resumeRetryCount="-1"
+           queue.type="linkedList"
+           queue.filename="fwd_queue"
+           queue.maxdiskspace="1g"
+           queue.saveonshutdown="on")
+{% endif %}

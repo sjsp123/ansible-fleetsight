@@ -1,0 +1,95 @@
+---
+# group_vars/all/linuxdb_dashboard.yml
+# LinuxDB-wide overrides for roles/linuxdb_reports and roles/linuxdb_dashboard
+# (see each role's defaults for the full list of variables and
+# comments). Follows the same pattern as group_vars/all/log_db.yml.
+
+# Opt-in toggles - both role-internal defaults are false. Persisted to
+# true here (rather than left at their role defaults) so a plain
+# `ansible-playbook playbooks/linuxdb_dashboard.yml` run - with no -e
+# flags - both collects diagnostics and (re)deploys the dashboard.
+# This mirrors the lesson learned with log_search_ui earlier in this
+# project: an unpersisted disabled-by-default value is easy to forget
+# and silently skips real work.
+linuxdb_reports_enabled: true
+linuxdb_dashboard_enabled: true
+config_snapshot_enabled: true
+
+# linuxdb_reports_data_dir and linuxdb_reports_checks are DUPLICATED here
+# (not just left as roles/linuxdb_reports' own defaults) deliberately:
+# roles/linuxdb_dashboard's config.py.j2 template also reads these same
+# two variables, but the two roles run in SEPARATE plays targeting
+# DIFFERENT host groups (linuxdb_reports -> log_clients, linuxdb_dashboard
+# -> log_collector). Ansible only carries role defaults forward as
+# hostvars for a host that actually ran that role earlier in the SAME
+# playbook invocation - so if you ever run just
+# `--tags linuxdb_dashboard_ui` (skipping the linuxdb_reports play
+# entirely) or `--limit` to only log_collector, roles/linuxdb_reports'
+# own defaults/main.yml would never load and config.py.j2 would fail
+# with "linuxdb_reports_data_dir is undefined". Defining both variables
+# here instead guarantees they're always available to both roles, in
+# every combination of --tags/--limit, from one single source of
+# truth. If you change either value, change it ONLY here - do not
+# override it separately in roles/linuxdb_reports/defaults/main.yml.
+linuxdb_reports_data_dir: "/linuxdb/reports"
+
+# config_snapshot_data_dir is duplicated here for the exact same reason
+# as linuxdb_reports_data_dir above: roles/linuxdb_dashboard's
+# config.py.j2 template reads this variable too, but config_snapshot
+# runs in a separate play (targeting log_clients) from linuxdb_dashboard
+# (targeting log_collector). If you change this value, change it ONLY
+# here - do not override it separately in
+# roles/config_snapshot/defaults/main.yml.
+config_snapshot_data_dir: "/linuxdb/configs"
+
+# idm_hc_dashboard_dir is duplicated here for the exact same reason as
+# linuxdb_reports_data_dir/config_snapshot_data_dir above: roles/
+# linuxdb_dashboard's config.py.j2 template reads this variable too, but
+# roles/idm_healthchecks runs in its own separate play (targeting the
+# idm group) from linuxdb_dashboard (targeting log_collector). If you
+# change this value, change it ONLY here - do not override it separately
+# in roles/idm_healthchecks/defaults/main.yml.
+idm_hc_dashboard_dir: "/linuxdb/idm_healthcheck"
+
+linuxdb_reports_checks:
+  - key: df_check
+    label: "Disk & Filesystem"
+    script: df_check.sh
+
+  - key: proc_check
+    label: "Processes"
+    script: proc_check.sh
+
+  - key: svr_check
+    label: "Server Health"
+    script: svr_check.sh
+
+  - key: system_stats
+    label: "System & Hardware Info"
+    script: system_stats.sh
+
+  - key: dnf_updates
+    label: "Updates"
+    script: dnf_updates.sh
+
+  - key: rpm_report
+    label: "Installed Packages"
+    script: rpm_report.sh
+
+# linuxdb_reports_remote_tmp: "/var/tmp"
+# linuxdb_reports_keep_runs: 30
+
+# linuxdb_dashboard_hostinfo_csv_path: "/linuxdb/hostinfo/hostinfo.csv"
+# linuxdb_dashboard_max_history_list: 30
+# linuxdb_dashboard_port: 8082
+# linuxdb_dashboard_app_dir: "/opt/linuxdb_dashboard"
+# linuxdb_dashboard_user: "linuxdb_dashboard"
+
+# Sibling-app cross-link - shows "Log Search" and "Insights" tabs in the
+# LinuxDB Dashboard's (and the Guide's) header switcher, alongside the
+# always-present LinuxDB Dashboard/Guide tabs, so every page in either app
+# can jump straight to any of the four: LinuxDB Dashboard, Log Search,
+# Insights, Guide. See roles/linuxdb_dashboard/defaults/main.yml for the
+# full explanation.
+linuxdb_dashboard_sibling_app_name: "Log Search"
+linuxdb_dashboard_sibling_app_url: "{{ 'https' if log_search_ui_tls_enabled | default(true) else 'http' }}://{{ ansible_fqdn | default(ansible_hostname) }}:{{ log_search_ui_port | default(8081) }}/"

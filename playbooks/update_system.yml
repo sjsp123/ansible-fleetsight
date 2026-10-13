@@ -1,0 +1,21 @@
+---
+# playbooks/update_system.yml
+#
+#   Run with:
+#
+#   ansible-playbook playbooks/update_system.yml -e target_hosts=client1
+#
+# Useful overrides:
+#   -e system_update_reboot_enabled=false   # patch only, never reboot
+#   -e system_update_security_only=true     # security errata only
+#   -e update_serial=1                      # reboot one host at a time
+#   --skip-tags reboot                      # patch now, reboot later
+#
+- name: Patch systems with dnf/yum and reboot if required
+  hosts: "{{ target_hosts | mandatory }}"
+  become: true
+  serial: "{{ update_serial | default('30%') }}"
+  gather_facts: true
+
+  roles:
+    - role: system_update

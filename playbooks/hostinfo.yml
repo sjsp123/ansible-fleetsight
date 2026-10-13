@@ -1,0 +1,28 @@
+---
+- name: Host Information Report
+  hosts: "{{ target_host }}"
+  gather_facts: true
+  become: true
+
+  vars_prompt:
+    - name: target_host
+      prompt: "Enter target host or inventory group"
+      private: no
+      default: "all"
+      # default lets an interactive run just press Enter for the common
+      # case. For unattended/cron runs, ALWAYS pass -e target_host=all
+      # (or a specific group) explicitly rather than relying on this
+      # default alone - Ansible skips vars_prompt entirely when the var
+      # is already supplied via --extra-vars, which is the reliable,
+      # version-proof way to guarantee a non-interactive run never blocks
+      # waiting on a stdin prompt that cron can't answer.
+
+  vars:
+    # Lives under /linuxdb (same convention as linuxdb_reports_data_dir
+    # and config_snapshot_data_dir) so all three data sources the
+    # linuxdb_dashboard reads sit side-by-side on the same mount instead
+    # of hostinfo.csv being the odd one out under /var/tmp.
+    host_report_csv_path: "/linuxdb/hostinfo"
+
+  roles:
+    - hostinfo

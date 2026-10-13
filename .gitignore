@@ -1,0 +1,20 @@
+*.log
+*.retry
+*.sw?
+__pycache__/
+collections/
+inventory
+playbooks/reports/*.txt
+group_vars/all/*_secrets.yml
+group_vars/all/site_hosts.yml
+group_vars/*/site_hosts.yml
+
+# Controller-local inventory copies, rollback data and runtime locks.
+/inventory.bak*
+/inventory.*.bak
+/inventory.*.backup
+/chrony_conf_backups/
+/.ansible_cron.lock
+.pytest_cache/
+.DS_Store
+**/.DS_Store

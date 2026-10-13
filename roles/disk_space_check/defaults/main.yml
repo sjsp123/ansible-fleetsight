@@ -1,0 +1,58 @@
+---
+# roles/disk_space_check/defaults/main.yml
+#
+# Local, per-host disk-space and inode utilisation checking. Deployed
+# to every [log_clients] host (including the collector itself, which
+# is also a log_clients member) via playbooks/centralized_logging.yml.
+# Logs one syslog message per breach - it never emails anything
+# itself. roles/disk_space_watcher (collector only) polls log_db for
+# these messages and sends the actual alert email - see that role's
+# README.md.
+
+# Opt-in, matching the pattern used by roles/service_failure_watcher,
+# roles/host_availability_watcher, etc: this role's own default is
+# false; group_vars/all/disk_space_check.yml flips it on fleet-wide by
+# default in this repo.
+disk_space_check_enabled: false
+
+# Check cadence. Disk/inode fill-up is normally much slower-moving
+# than a service crash or a host going unreachable, so this defaults
+# to a longer interval than roles/service_failure_watcher's 30s or
+# roles/host_availability_watcher's 60s.
+disk_space_check_poll_interval_seconds: 300
+
+# Utilisation thresholds (percent used), applied per real (non-pseudo)
+# mounted filesystem. Deliberately the same numbers as
+# roles/linuxdb_reports/files/df_check.sh's WARN_THRESHOLD/
+# CRIT_THRESHOLD (85/95) so what triggers an email here lines up with
+# what the dashboard already shows as WARNING/CRITICAL - change both
+# places together if you retune them.
+disk_space_check_space_warn_threshold: 85
+disk_space_check_space_crit_threshold: 95
+
+# Inode thresholds are configured separately from space thresholds
+# (some workloads exhaust inodes on a filesystem that still has
+# plenty of free space, e.g. huge numbers of tiny files) but default
+# to the same 85/95 numbers for consistency.
+disk_space_check_inode_warn_threshold: 85
+disk_space_check_inode_crit_threshold: 95
+
+# Pseudo/virtual filesystem types excluded from checking entirely -
+# same set and same reasoning as df_check.sh's EXCLUDED_TYPES:
+# tmpfs/devtmpfs are RAM-backed and sizing is by design, squashfs/
+# overlay are normally near-100%-full on purpose, iso9660/efivarfs are
+# fixed-size and not a capacity concern.
+disk_space_check_excluded_fstypes:
+  - tmpfs
+  - devtmpfs
+  - squashfs
+  - overlay
+  - iso9660
+  - efivarfs
+
+# Unprivileged system account the timer/service runs as. Reading
+# /proc/mounts and calling statvfs() on each mountpoint needs no
+# elevated privilege.
+disk_space_check_user: disk_space_chk
+
+disk_space_check_app_dir: /opt/disk_space_check

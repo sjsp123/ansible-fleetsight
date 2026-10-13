@@ -1,0 +1,40 @@
+---
+- name: Validate required input
+  ansible.builtin.assert:
+    that:
+      - push_script_src | length > 0
+    fail_msg: "push_script_src must be provided"
+
+- name: Copy script to target
+  ansible.builtin.copy:
+    src: "{{ push_script_src }}"
+    dest: "{{ push_script_dest }}/{{ push_script_src | basename }}"
+    mode: "{{ push_script_mode }}"
+
+- name: Run script if enabled
+  ansible.builtin.command:
+    cmd: "{{ push_script_command | default(push_script_dest ~ '/' ~ (push_script_src | basename), true) }}"
+  register: push_script_result
+  changed_when: false
+  failed_when: push_script_result.rc > 1
+  when: push_script_run | bool
+
+- name: Show script output
+  ansible.builtin.debug:
+    var: push_script_result.stdout_lines
+  when:
+    - push_script_run | bool
+    - push_script_result is defined
+
+- name: Show return code
+  ansible.builtin.debug:
+    msg: "Return code: {{ push_script_result.rc }}"
+  when:
+    - push_script_run | bool
+    - push_script_result is defined
+
+- name: Remove script after run if cleanup requested
+  ansible.builtin.file:
+    path: "{{ push_script_dest }}/{{ push_script_src | basename }}"
+    state: absent
+  when: push_script_cleanup | bool

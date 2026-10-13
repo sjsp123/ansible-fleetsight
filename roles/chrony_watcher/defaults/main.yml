@@ -1,0 +1,66 @@
+---
+# roles/chrony_watcher/defaults/main.yml
+#
+# Centralized, fleet-wide email alerting the moment ANY [log_clients]
+# host's NTP/chrony status (checked locally by roles/chrony_check)
+# goes abnormal - no per-host mail relay required. Polls the same
+# log_db database roles/log_alerter, roles/service_failure_watcher,
+# and roles/disk_space_watcher read, matching roles/chrony_check's own
+# fixed alert wording - see README.md "How it works".
+#
+# This role is only ever deployed to [log_collector] (see
+# playbooks/centralized_logging.yml) - it reads log_db locally and
+# relies on roles/rsyslog_client already forwarding every host's
+# journald content (including roles/chrony_check's syslog messages)
+# to this collector.
+
+# Opt-in, matching the pattern used by roles/disk_space_watcher,
+# roles/service_failure_watcher, etc: this role's own default is
+# false; group_vars/all/chrony_watcher.yml flips it on fleet-wide by
+# default in this repo.
+chrony_watcher_enabled: false
+
+# Poll cadence. Independent of, and much shorter than,
+# chrony_check_poll_interval_seconds (how often each host re-runs its
+# own local check) - roughly a fifth of it, the same ratio
+# roles/disk_space_check (300s)/roles/disk_space_watcher (60s) use.
+chrony_watcher_poll_interval_seconds: 180
+
+# Hard cap on how many individual breaches are listed in a single
+# alert email body, in case several land in the same poll window.
+chrony_watcher_max_rows_per_email: 50
+
+# Where the "last row already alerted on" watermark is persisted
+# between runs (a single JSON file, not the database itself - this
+# keeps the role from needing any write privilege on log_db at all; it
+# reuses the existing SELECT-only log_db_reader_user/_password, same
+# as roles/log_search_ui, roles/log_alerter, roles/
+# service_failure_watcher, and roles/disk_space_watcher).
+chrony_watcher_state_dir: /var/lib/chrony_watcher
+chrony_watcher_state_file: "{{ chrony_watcher_state_dir }}/state.json"
+
+# Unprivileged system account the timer/service runs as.
+chrony_watcher_user: chrony_watch
+
+chrony_watcher_app_dir: /opt/chrony_watcher
+
+# Read-only database connection - defaults to the matching log_db_*
+# variables (same pattern roles/log_alerter/log_search_ui/
+# service_failure_watcher/disk_space_watcher already use) so this
+# stays in sync automatically as long as you only override the
+# log_db_*/rsyslog_collector_db_host versions, not these directly.
+chrony_watcher_db_host: "{{ rsyslog_collector_db_host | default('localhost') }}"
+chrony_watcher_db_name: "{{ log_db_name | default('syslog') }}"
+chrony_watcher_db_table: "{{ log_db_table | default('systemevents') }}"
+chrony_watcher_db_user: "{{ log_db_reader_user | default('log_search') }}"
+chrony_watcher_db_password: "{{ log_db_reader_password | default('CHANGE_ME_log_search_reader') }}"
+
+# Mail delivery - see README.md "Mail delivery": this always talks to
+# the LOCAL mail transport agent on chrony_watcher_smtp_host (the
+# log_collector's own MTA, e.g. admin1's Postfix), never an external
+# relay directly, so no relay credentials are needed or stored here.
+chrony_watcher_email_to:
+  - root
+chrony_watcher_email_from: "rhel-alerts@{{ ansible_fqdn | default(ansible_hostname) }}"
+chrony_watcher_smtp_host: localhost
+chrony_watcher_smtp_port: 25

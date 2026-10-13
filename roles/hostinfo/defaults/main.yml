@@ -1,0 +1,21 @@
+---
+# Role-internal configuration only. The check registry (host_checks,
+# rsm222_hosts, etc.) lives in group_vars/all/host_checks.yml — that's the
+# file to edit when you want to add a new column to the report.
+
+# Safety-net default only — playbooks/hostinfo.yml always sets this
+# explicitly (currently "/linuxdb/hostinfo", matching the same /linuxdb
+# convention as linuxdb_reports_data_dir/config_snapshot_data_dir). Kept
+# in sync here so a standalone role run without that override still
+# writes hostinfo.csv to the same place the dashboard expects it.
+host_report_csv_path: "/linuxdb/hostinfo"
+
+# Safety net only: if group_vars/all/host_checks.yml is ever missing,
+# fall back to no checks rather than failing with an undefined variable.
+host_checks: []
+
+# How many timestamped hostinfo_<timestamp>.csv snapshots to keep in
+# host_report_csv_path/history/, for the dashboard's "view history"
+# selector on the Overview page. Mirrors linuxdb_reports_keep_runs'
+# role for roles/linuxdb_reports.
+host_report_keep_runs: 30

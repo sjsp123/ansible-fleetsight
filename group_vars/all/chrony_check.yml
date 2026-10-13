@@ -1,0 +1,13 @@
+---
+# group_vars/all/chrony_check.yml
+# Fleet-wide overrides for roles/chrony_check (see that role's
+# defaults/main.yml for the full variable list). Uncomment/edit as
+# needed - this follows the same pattern as
+# group_vars/all/disk_space_check.yml.
+
+# Opt-in toggle - defaults to false/off in roles/chrony_check's own
+# defaults; this file flips it on for playbooks/centralized_logging.yml.
+# Applies to every [log_clients] host (including the collector itself).
+chrony_check_enabled: true
+
+# chrony_check_poll_interval_seconds: 900

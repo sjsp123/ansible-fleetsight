@@ -1,0 +1,40 @@
+# Managed by Ansible (roles/rsyslog_collector) - do not edit by hand.
+#
+# Accept syslog over TCP from remote clients and store each source host's
+# messages in its own file, split by originating program. Locally-generated
+# messages on this host are unaffected and continue to /var/log/messages etc.
+
+{% if rsyslog_tls_enabled | default(false) | bool %}
+#
+# TLS (gtls/GnuTLS driver, server-only): this listener presents a
+# certificate signed by a lab CA so every client can verify it's really
+# talking to this collector, and the transport is fully encrypted.
+# StreamDriver.AuthMode is "anon" here because that setting controls
+# whether the collector authenticates the CLIENT's certificate (mutual
+# TLS) - it does not, since clients present no certificate here. "anon"
+# does NOT mean unencrypted; it just means "don't require/check a peer
+# cert".
+global(
+    DefaultNetstreamDriverCAFile="{{ rsyslog_tls_ca_cert_path }}"
+    DefaultNetstreamDriverCertFile="{{ rsyslog_tls_cert_path }}"
+    DefaultNetstreamDriverKeyFile="{{ rsyslog_tls_key_path }}"
+)
+
+module(load="imtcp"
+       StreamDriver.Name="gtls"
+       StreamDriver.Mode="1"
+       StreamDriver.AuthMode="anon"
+       gnutlsPriorityString="{{ rsyslog_tls_priority_string }}")
+input(type="imtcp" port="{{ rsyslog_collector_port | default(6514) }}")
+{% else %}
+module(load="imtcp")
+input(type="imtcp" port="{{ rsyslog_collector_port | default(6514) }}")
+{% endif %}
+
+$CreateDirs on
+$template RemoteHostLogs, "{{ rsyslog_remote_log_dir | default('/var/log/remote') }}/%HOSTNAME%/%PROGRAMNAME%.log"
+
+if $fromhost-ip != '127.0.0.1' then {
+    action(type="omfile" dynaFile="RemoteHostLogs" fileCreateMode="0640" dirCreateMode="0750")
+    stop
+}

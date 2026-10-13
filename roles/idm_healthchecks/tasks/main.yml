@@ -1,0 +1,174 @@
+---
+- name: Ensure ipa-healthcheck package is installed (optional)
+  ansible.builtin.dnf:
+    name: ipa-healthcheck
+    state: present
+  # | bool guards against the same conditional-type deprecation as
+  # system_update's reboot task: this is documented as overridable
+  # via -e idm_hc_install_package=false on the CLI, and CLI extra-vars
+  # always arrive as raw strings rather than native booleans.
+  when: idm_hc_install_package | bool
+  become: true
+
+- name: Ensure healthcheck log directory exists
+  ansible.builtin.file:
+    path: "{{ idm_hc_log_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  become: true
+
+- name: Build base healthcheck command
+  ansible.builtin.set_fact:
+    idm_hc_cmd: "ipa-healthcheck --output-type=json"
+  when: idm_hc_mode == "all"
+
+- name: Build services-only healthcheck command
+  ansible.builtin.set_fact:
+    idm_hc_cmd: >
+      ipa-healthcheck --output-type=json
+      --source=ipahealthcheck.meta.services
+  when: idm_hc_mode == "services"
+
+- name: Build replication/topology healthcheck command
+  ansible.builtin.set_fact:
+    idm_hc_cmd: >
+      ipa-healthcheck --output-type=json
+      --source=ipahealthcheck.ds.replication
+      --source=ipahealthcheck.ipa.topology
+  when: idm_hc_mode == "replication_topology"
+
+- name: Append any extra sources
+  ansible.builtin.set_fact:
+    idm_hc_cmd: >
+      {{ idm_hc_cmd }}
+      {% for s in idm_hc_extra_sources %}
+      --source={{ s }}
+      {% endfor %}
+  when: idm_hc_extra_sources | length > 0
+
+- name: Run IdM healthcheck
+  ansible.builtin.command: "{{ idm_hc_cmd }}"
+  register: idm_hc_result
+  changed_when: false
+  become: true
+
+- name: Debug raw healthcheck JSON (for troubleshooting)
+  ansible.builtin.debug:
+    var: idm_hc_result.stdout
+  when: idm_hc_result is defined
+
+- name: Parse healthcheck JSON
+  ansible.builtin.set_fact:
+    idm_hc_parsed: "{{ idm_hc_result.stdout | from_json }}"
+  when: idm_hc_result is defined
+
+- name: Summarise healthcheck results per host
+  ansible.builtin.debug:
+    msg: >
+      IdM Healthcheck on {{ inventory_hostname }}:
+      total={{ idm_hc_parsed | length }},
+      errors={{ (idm_hc_parsed | selectattr('result','equalto','ERROR') | list | length) }},
+      critical={{ (idm_hc_parsed | selectattr('result','equalto','CRITICAL') | list | length) }},
+      warnings={{ (idm_hc_parsed | selectattr('result','equalto','WARNING') | list | length) }}
+  when: idm_hc_parsed is defined
+
+- name: Collect non-SUCCESS healthcheck issues
+  ansible.builtin.set_fact:
+    idm_hc_issues: "{{ idm_hc_parsed | rejectattr('result', 'equalto', 'SUCCESS') | list }}"
+  when: idm_hc_parsed is defined
+
+- name: Show details of any healthcheck issues found
+  ansible.builtin.debug:
+    msg: "[{{ item.result }}] {{ item.source }}.{{ item.check }}: {{ (item.kw | default({})).msg | default('no message provided') }}"
+  loop: "{{ idm_hc_issues }}"
+  loop_control:
+    label: "{{ item.source }}.{{ item.check }} [{{ item.result }}]"
+  when: idm_hc_issues is defined and idm_hc_issues | length > 0
+
+- name: Fail if errors/critical issues detected and fail_on_error enabled
+  ansible.builtin.fail:
+    msg: >
+      IdM Healthcheck detected ERROR/CRITICAL issues on {{ inventory_hostname }}.
+      Review ipa-healthcheck output and logs in {{ idm_hc_log_dir }}.
+  when: >
+    idm_hc_fail_on_error and
+    idm_hc_parsed is defined and
+    (
+      (idm_hc_parsed | selectattr('result','equalto','ERROR') | list | length) > 0 or
+      (idm_hc_parsed | selectattr('result','equalto','CRITICAL') | list | length) > 0
+    )
+
+- name: Optionally copy JSON output to central share
+  ansible.builtin.copy:
+    dest: "{{ idm_hc_share_dest }}/{{ inventory_hostname }}-ipa-healthcheck.json"
+    content: "{{ idm_hc_result.stdout }}"
+    mode: "0640"
+  delegate_to: "{{ idm_hc_share_server | default('localhost', true) }}"
+  when: >
+    idm_hc_copy_to_share and
+    idm_hc_share_server | length > 0 and
+    idm_hc_share_dest | length > 0 and
+    idm_hc_result is defined
+
+###############################################################################
+# Feed roles/linuxdb_dashboard: same timestamped-run/latest-pointer/prune
+# layout roles/linuxdb_reports uses, written on the CONTROL NODE (delegate_to
+# localhost - normally admin1) rather than the idm_hc_share_server above,
+# which is an arbitrary user-chosen destination for the raw stdout. This
+# always stores the PARSED result specifically so roles/linuxdb_dashboard can
+# render it - see that role's README.md "IdM Health".
+###############################################################################
+
+- name: Generate a run timestamp for this host's dashboard record
+  ansible.builtin.set_fact:
+    idm_hc_dashboard_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+  when:
+    - idm_hc_dashboard_enabled | bool
+    - idm_hc_parsed is defined
+
+- name: Ensure the dashboard data directory exists for this host on the control node
+  ansible.builtin.file:
+    path: "{{ idm_hc_dashboard_dir }}/{{ inventory_hostname }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  when:
+    - idm_hc_dashboard_enabled | bool
+    - idm_hc_parsed is defined
+
+- name: Save this run's parsed healthcheck JSON on the control node
+  ansible.builtin.copy:
+    content: "{{ idm_hc_parsed | to_nice_json }}\n"
+    dest: "{{ idm_hc_dashboard_dir }}/{{ inventory_hostname }}/{{ idm_hc_dashboard_timestamp }}.json"
+    mode: "0644"
+  delegate_to: localhost
+  when:
+    - idm_hc_dashboard_enabled | bool
+    - idm_hc_parsed is defined
+
+- name: Point 'latest' at this run for the dashboard
+  ansible.builtin.copy:
+    content: "{{ idm_hc_dashboard_timestamp }}\n"
+    dest: "{{ idm_hc_dashboard_dir }}/{{ inventory_hostname }}/latest"
+    mode: "0644"
+  delegate_to: localhost
+  when:
+    - idm_hc_dashboard_enabled | bool
+    - idm_hc_parsed is defined
+
+- name: Prune old dashboard runs beyond idm_hc_dashboard_keep_runs
+  ansible.builtin.shell: >
+    set -o pipefail;
+    cd {{ (idm_hc_dashboard_dir ~ '/' ~ inventory_hostname) | quote }} &&
+    ls -1 -- *.json 2>/dev/null | sort |
+    head -n -{{ idm_hc_dashboard_keep_runs }} |
+    xargs -r rm -f --
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  changed_when: false
+  when:
+    - idm_hc_dashboard_enabled | bool
+    - idm_hc_parsed is defined

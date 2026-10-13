@@ -1,0 +1,54 @@
+---
+# Whether to ensure ipa-healthcheck package is installed
+idm_hc_install_package: true
+#
+# # Mode of healthcheck to run:
+# #  - all
+# #  - services
+# #  - replication_topology
+idm_hc_mode: "all"
+
+# Fail the play if any checks report ERROR or CRITICAL
+idm_hc_fail_on_error: true
+#
+# Directory where healthcheck logs are stored when the timer/service is enabled.
+# Red Hat docs show /var/log/ipa/healthcheck/ as the default log directory. [web:78][web:75]
+idm_hc_log_dir: "/var/log/ipa/healthcheck"
+#
+# Optional list of extra --source values to include
+idm_hc_extra_sources: []
+#
+# Whether to copy the JSON output to a central share (if configured in playbook)
+idm_hc_copy_to_share: false
+idm_hc_share_server: ""
+idm_hc_share_dest: ""
+idm_hc_change_ref: ""
+
+# Feed roles/linuxdb_dashboard: whenever this role runs (playbooks/
+# idm_healthcheck.yml, ad hoc, against whatever target_host you pick),
+# save this run's parsed JSON on the control node (normally admin1) as
+# one more timestamped run per host, same layout roles/linuxdb_reports
+# already uses (<dir>/<hostname>/<timestamp>.json + a "latest"
+# pointer) - see roles/linuxdb_dashboard/README.md "IdM Health".
+# Independent of idm_hc_copy_to_share above (that feature copies the
+# RAW stdout to an arbitrary share/host of your choosing for evidence
+# purposes; this one always writes the PARSED result to the control
+# node itself, specifically for the dashboard to read - the two can
+# both be enabled at once with no conflict).
+#
+# NOTE: this repo's group_vars/all/linuxdb_dashboard.yml DUPLICATES
+# idm_hc_dashboard_dir below, for the same reason
+# roles/linuxdb_reports/defaults/main.yml documents for
+# linuxdb_reports_data_dir - roles/linuxdb_dashboard's config.py.j2
+# runs in a separate play/host group and can't see this role's
+# defaults as a hostvar unless this role ran earlier in the SAME
+# invocation. If you change idm_hc_dashboard_dir, change it in both
+# places.
+idm_hc_dashboard_enabled: true
+idm_hc_dashboard_dir: "/linuxdb/idm_healthcheck"
+
+# How many timestamped runs to retain per host before older ones are
+# pruned. Matches linuxdb_reports_keep_runs' default and reasoning -
+# ipa-healthcheck JSON is typically tens of KB per run, so even 30
+# runs per host is a small footprint.
+idm_hc_dashboard_keep_runs: 30

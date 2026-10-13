@@ -1,0 +1,95 @@
+---
+# playbooks/lineage.yml
+#
+# "Why is this running?" - traces a process, port, open file, or
+# container back through its parent chain to the systemd unit, container,
+# cron job, SSH session, or interactive shell actually responsible for
+# it, with a "Why It Exists" / "Source" / "Warnings" narrative -
+# reachable over Ansible against any managed host with no binary to
+# download or install - see roles/lineage/README.md for the full
+# flag reference and worked examples.
+#
+# Non-interactive (the only reliable form for cron/AAP) - pass whichever
+# -e vars you need; each one you supply skips its matching prompt below:
+#   ansible-playbook playbooks/lineage.yml \
+#     -e target_host=admin1 -e target=nginx
+#
+#   ansible-playbook playbooks/lineage.yml \
+#     -e target_host=admin1 -e target_port=8081 -e mode=short
+#
+#   ansible-playbook playbooks/lineage.yml \
+#     -e target_host=admin1 -e target_pid=14233 -e mode=tree
+#
+#   ansible-playbook playbooks/lineage.yml \
+#     -e target_host=admin1 -e target_file=/var/lib/dpkg/lock
+#
+# Interactive - run it with no -e flags at all and answer the prompts.
+# Press Enter to skip any target field that doesn't apply and to accept
+# every other default:
+#   ansible-playbook playbooks/lineage.yml
+
+- name: Why is this running? (process/port/file/container causality trace)
+  hosts: "{{ target_host }}"
+  gather_facts: false
+  become: true
+
+  vars_prompt:
+    - name: target_host
+      prompt: "Target host or inventory group"
+      private: no
+      default: "all"
+      # This default only applies to an interactive terminal run. For
+      # cron/AAP always pass -e target_host=<host> explicitly -
+      # vars_prompt is skipped whenever the var already arrived via
+      # --extra-vars, so a non-interactive run never blocks on stdin.
+
+    - name: target
+      prompt: "Process/service name to check (comma-separated for more than one, Enter to skip)"
+      private: no
+      default: ""
+
+    - name: target_pid
+      prompt: "PID to check (comma-separated for more than one, Enter to skip)"
+      private: no
+      default: ""
+
+    - name: target_port
+      prompt: "Port to check (comma-separated for more than one, Enter to skip)"
+      private: no
+      default: ""
+
+    - name: target_file
+      prompt: "File path to check who's holding it open (comma-separated for more than one, Enter to skip)"
+      private: no
+      default: ""
+
+    - name: target_container
+      prompt: "Container name/image substring to check (comma-separated for more than one, Enter to skip)"
+      private: no
+      default: ""
+
+    - name: mode
+      prompt: "Output mode - standard, short, tree, json, env, or warnings"
+      private: no
+      default: "standard"
+
+    - name: exact
+      prompt: "Require an exact name match instead of substring matching? (yes/no)"
+      private: no
+      default: "no"
+
+    - name: verbose
+      prompt: "Include environment variables in the output? (yes/no)"
+      private: no
+      default: "no"
+
+  pre_tasks:
+    - name: Fail fast if an invalid mode was entered
+      ansible.builtin.fail:
+        msg: >-
+          Invalid mode '{{ mode }}'. Must be one of: standard, short, tree,
+          json, env, warnings.
+      when: mode not in ['standard', 'short', 'tree', 'json', 'env', 'warnings']
+
+  roles:
+    - lineage

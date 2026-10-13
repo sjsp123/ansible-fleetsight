@@ -1,0 +1,66 @@
+---
+# roles/service_failure_watcher/defaults/main.yml
+#
+# Centralized, fleet-wide alerting for ANY systemd unit failure on ANY
+# host that already forwards logs to this collector - no per-host mail
+# relay required. Polls the same log_db database roles/log_alerter
+# reads, but matches systemd's own universal "Failed with result"
+# message instead of a severity threshold, so it stays quiet unless a
+# unit actually failed - see README.md "How it works".
+#
+# This role is only ever deployed to [log_collector] (see
+# playbooks/centralized_logging.yml) - it reads log_db locally and
+# relies on roles/rsyslog_client already forwarding every host's
+# journald content (including systemd's own failure messages) to this
+# collector. It replaces roles/service_failure_alert's per-host
+# OnFailure= mechanism, which required a working local mail relay on
+# every monitored host - see root README.md "Alerting" for why that
+# role is now retired/disabled by default.
+
+# Opt-in, matching the pattern used by roles/log_db, roles/log_alerter,
+# etc: this role's own default is false; group_vars/all/
+# service_failure_watcher.yml flips it on fleet-wide by default in this
+# repo.
+service_failure_watcher_enabled: false
+
+# Poll cadence. Independent of, and much shorter than, any
+# hostinfo/linuxdb_reports cron interval.
+service_failure_watcher_poll_interval_seconds: 30
+
+# Hard cap on how many individual failures are listed in a single alert
+# email body, in the rare case several land in the same poll window.
+service_failure_watcher_max_rows_per_email: 50
+
+# Where the "last row already alerted on" watermark is persisted
+# between runs (a single JSON file, not the database itself - this
+# keeps the role from needing any write privilege on log_db at all; it
+# reuses the existing SELECT-only log_db_reader_user/_password, same
+# as roles/log_search_ui and roles/log_alerter).
+service_failure_watcher_state_dir: /var/lib/service_failure_watcher
+service_failure_watcher_state_file: "{{ service_failure_watcher_state_dir }}/state.json"
+
+# Unprivileged system account the timer/service runs as.
+service_failure_watcher_user: svc_fail_watch
+
+service_failure_watcher_app_dir: /opt/service_failure_watcher
+
+# Read-only database connection - defaults to the matching log_db_*
+# variables (same pattern roles/log_alerter/log_search_ui already use)
+# so this stays in sync automatically as long as you only override the
+# log_db_*/rsyslog_collector_db_host versions, not these directly.
+service_failure_watcher_db_host: "{{ rsyslog_collector_db_host | default('localhost') }}"
+service_failure_watcher_db_name: "{{ log_db_name | default('syslog') }}"
+service_failure_watcher_db_table: "{{ log_db_table | default('systemevents') }}"
+service_failure_watcher_db_user: "{{ log_db_reader_user | default('log_search') }}"
+service_failure_watcher_db_password: "{{ log_db_reader_password | default('CHANGE_ME_log_search_reader') }}"
+
+# Mail delivery - see README.md "Mail delivery": this always talks to
+# the LOCAL mail transport agent on service_failure_watcher_smtp_host
+# (the log_collector's own MTA, e.g. admin1's Postfix), never an
+# external relay directly, so no relay credentials are needed or
+# stored here.
+service_failure_watcher_email_to:
+  - root
+service_failure_watcher_email_from: "rhel-alerts@{{ ansible_fqdn | default(ansible_hostname) }}"
+service_failure_watcher_smtp_host: localhost
+service_failure_watcher_smtp_port: 25

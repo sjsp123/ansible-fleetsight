@@ -1,0 +1,32 @@
+---
+# group_vars/all/service_failure_alert.yml
+# Fleet-wide overrides for roles/service_failure_alert (see that role's
+# defaults/main.yml for the full variable list). Uncomment/edit as
+# needed - this follows the same pattern as group_vars/all/log_db.yml.
+#
+# RETIRED: this per-host mechanism (a systemd OnFailure= drop-in on
+# every covered unit on every monitored host, each needing its own
+# working local mail relay) has been superseded by
+# roles/service_failure_watcher - a single centralized poller that runs
+# only on log_collector and detects failures fleet-wide via the
+# existing log_db pipeline, with no per-host mail setup at all. See
+# root README.md "Alerting" and roles/service_failure_watcher/README.md.
+#
+# Disabled by default below. playbooks/service_failure_alert.yml now
+# also tears down any already-deployed drop-ins/script/unit on a host
+# when this is false, so a normal re-run fully reverses the old
+# mechanism. The role's code is kept in the repo (not deleted) in case
+# a future need for a per-host, no-log-pipeline-dependency alert
+# reappears - re-enabling it is just flipping this back to true.
+service_failure_alert_enabled: false
+
+# Add more units fleet-wide here (chronyd.service, plus rsm222.service/
+# rsm232.service on hosts already in rsm222_hosts/rsm232_hosts, are
+# always covered - see roles/service_failure_alert/README.md):
+# service_failure_alert_extra_units:
+#   - sshd.service
+#   - firewalld.service
+#   - auditd.service
+#   - crond.service
+
+# service_failure_alert_email_to: root

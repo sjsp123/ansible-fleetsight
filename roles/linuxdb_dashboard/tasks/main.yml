@@ -1,0 +1,239 @@
+---
+# roles/linuxdb_dashboard/tasks/main.yml
+#
+# Deploys the read-only linuxdb dashboard web UI: a plain WSGI app (no
+# Flask, no third-party packages) served by Python's own
+# wsgiref.simple_server under systemd. Displays hostinfo.csv and the
+# timestamped diagnostic history collected by roles/linuxdb_reports.
+#
+# The only package this role needs is python3 itself, which ships as
+# part of RHEL's own BaseOS/AppStream repos - no EPEL, no extra repos.
+
+- name: Ensure python3 is installed
+  ansible.builtin.package:
+    name: python3
+    state: present
+  become: true
+
+# Kerberos auth mode assumes krb5-workstation (kinit/kdestroy) is
+# already installed on a domain-joined host - this role never installs
+# it, only checks for it, same "check for, never install" pattern used
+# elsewhere in this repo for kinit/getcert/sssctl.
+- name: Check for kinit and kdestroy when Kerberos auth mode is enabled
+  ansible.builtin.shell: |
+    set -e
+    command -v {{ linuxdb_dashboard_auth_kerberos_kinit_path | quote }} >/dev/null
+    command -v {{ linuxdb_dashboard_auth_kerberos_kdestroy_path | quote }} >/dev/null
+  args:
+    executable: /bin/bash
+  register: linuxdb_dashboard_kerberos_tools_check
+  changed_when: false
+  failed_when: false
+  when: >
+    linuxdb_dashboard_enabled | bool and
+    linuxdb_dashboard_auth_mode == 'kerberos'
+
+- name: Fail with a clear message if kinit/kdestroy are missing (krb5-workstation not installed)
+  ansible.builtin.fail:
+    msg: >-
+      linuxdb_dashboard_auth_mode is 'kerberos' but kinit/kdestroy
+      (krb5-workstation) were not found at the configured paths on this
+      host. This role never installs krb5-workstation for you - install
+      it from RHEL's own BaseOS/AppStream repos
+      (dnf install krb5-workstation) and ensure the host is
+      domain-joined (realm join / SSSD) before enabling Kerberos auth
+      mode.
+  when: >
+    linuxdb_dashboard_enabled | bool and
+    linuxdb_dashboard_auth_mode == 'kerberos' and
+    linuxdb_dashboard_kerberos_tools_check is defined and
+    linuxdb_dashboard_kerberos_tools_check.rc is defined and
+    linuxdb_dashboard_kerberos_tools_check.rc != 0
+
+- name: Fail if Kerberos auth mode is enabled without a realm configured
+  ansible.builtin.fail:
+    msg: >-
+      linuxdb_dashboard_auth_mode is 'kerberos' but
+      linuxdb_dashboard_auth_kerberos_realm (or the shared
+      dashboard_auth_kerberos_realm) is empty. Set it to your Kerberos
+      realm name, e.g. LAB.EXAMPLE.COM or CORP.EXAMPLE.COM.
+  when: >
+    linuxdb_dashboard_enabled | bool and
+    linuxdb_dashboard_auth_mode == 'kerberos' and
+    (linuxdb_dashboard_auth_kerberos_realm | default('')) == ''
+
+- name: Create unprivileged system account for the dashboard service
+  ansible.builtin.user:
+    name: "{{ linuxdb_dashboard_user }}"
+    system: true
+    shell: /sbin/nologin
+    create_home: false
+  become: true
+  when: linuxdb_dashboard_enabled | bool
+
+- name: Create the dashboard application directory
+  ansible.builtin.file:
+    path: "{{ linuxdb_dashboard_app_dir }}"
+    state: directory
+    owner: "{{ linuxdb_dashboard_user }}"
+    group: "{{ linuxdb_dashboard_user }}"
+    mode: "0750"
+  become: true
+  when: linuxdb_dashboard_enabled | bool
+
+- name: Create the TLS certificate/key directory
+  ansible.builtin.file:
+    path: "{{ linuxdb_dashboard_tls_cert_path | dirname }}"
+    state: directory
+    owner: "{{ linuxdb_dashboard_user }}"
+    group: "{{ linuxdb_dashboard_user }}"
+    mode: "0750"
+  become: true
+  when: >
+    linuxdb_dashboard_enabled | bool and
+    linuxdb_dashboard_tls_enabled | bool
+
+# Plain `openssl` command, not community.crypto (kept out of
+# requirements.yml on purpose - see README "TLS"). Guarded by `creates:`
+# so this only ever runs once per host: a cert already present at
+# linuxdb_dashboard_tls_cert_path is left untouched on every later run,
+# same idempotent "create if missing" pattern as log_db's
+# postgresql-setup --initdb task.
+- name: Generate a self-signed TLS certificate if one doesn't already exist
+  ansible.builtin.command:
+    cmd: >
+      openssl req -x509 -nodes
+      -newkey rsa:2048
+      -keyout {{ linuxdb_dashboard_tls_key_path }}
+      -out {{ linuxdb_dashboard_tls_cert_path }}
+      -days {{ linuxdb_dashboard_tls_cert_days }}
+      -subj /CN={{ linuxdb_dashboard_tls_cn }}
+    creates: "{{ linuxdb_dashboard_tls_cert_path }}"
+  become: true
+  when: >
+    linuxdb_dashboard_enabled | bool and
+    linuxdb_dashboard_tls_enabled | bool and
+    linuxdb_dashboard_tls_generate_self_signed | bool
+
+- name: Set ownership and permissions on the generated TLS cert/key
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: "{{ linuxdb_dashboard_user }}"
+    group: "{{ linuxdb_dashboard_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ linuxdb_dashboard_tls_cert_path }}", mode: "0644" }
+    - { path: "{{ linuxdb_dashboard_tls_key_path }}", mode: "0600" }
+  become: true
+  when: >
+    linuxdb_dashboard_enabled | bool and
+    linuxdb_dashboard_tls_enabled | bool
+  notify: Restart linuxdb-dashboard
+
+- name: Deploy dashboard configuration (brace-free, safe to template)
+  ansible.builtin.template:
+    src: config.py.j2
+    dest: "{{ linuxdb_dashboard_app_dir }}/config.py"
+    owner: "{{ linuxdb_dashboard_user }}"
+    group: "{{ linuxdb_dashboard_user }}"
+    mode: "0640"
+  become: true
+  when: linuxdb_dashboard_enabled | bool
+  notify: Restart linuxdb-dashboard
+
+- name: Deploy the dashboard application (contains literal braces in embedded CSS, copy not template)
+  ansible.builtin.copy:
+    src: app.py
+    dest: "{{ linuxdb_dashboard_app_dir }}/app.py"
+    owner: "{{ linuxdb_dashboard_user }}"
+    group: "{{ linuxdb_dashboard_user }}"
+    mode: "0640"
+  become: true
+  when: linuxdb_dashboard_enabled | bool
+  notify: Restart linuxdb-dashboard
+
+- name: Deploy the standalone stdlib WSGI server runner
+  ansible.builtin.copy:
+    src: wsgi_standalone_server.py
+    dest: "{{ linuxdb_dashboard_app_dir }}/wsgi_standalone_server.py"
+    owner: "{{ linuxdb_dashboard_user }}"
+    group: "{{ linuxdb_dashboard_user }}"
+    mode: "0750"
+  become: true
+  when: linuxdb_dashboard_enabled | bool
+  notify: Restart linuxdb-dashboard
+
+# Pre-rendered static HTML for the team-facing Operational Support
+# Guide, served at /guide (see render_guide() in app.py). Generated
+# from the repo's own OPERATIONAL_SUPPORT_GUIDE.md by docs/render_guide.py
+# - regenerate and commit that file whenever the guide's markdown
+# source changes, then redeploy this role as usual. Plain copy (not
+# template): it's already-final HTML, nothing here needs Jinja.
+- name: Deploy the pre-rendered operational guide
+  ansible.builtin.copy:
+    src: guide_content.html
+    dest: "{{ linuxdb_dashboard_app_dir }}/guide_content.html"
+    owner: "{{ linuxdb_dashboard_user }}"
+    group: "{{ linuxdb_dashboard_user }}"
+    mode: "0640"
+  become: true
+  when: linuxdb_dashboard_enabled | bool
+  notify: Restart linuxdb-dashboard
+
+- name: Deploy the dashboard's systemd unit
+  ansible.builtin.template:
+    src: linuxdb-dashboard.service.j2
+    dest: /etc/systemd/system/linuxdb-dashboard.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when: linuxdb_dashboard_enabled | bool
+  notify: Restart linuxdb-dashboard
+
+- name: Ensure the dashboard service is enabled and running
+  ansible.builtin.systemd:
+    name: linuxdb-dashboard
+    state: started
+    enabled: true
+    daemon_reload: true
+  become: true
+  when: linuxdb_dashboard_enabled | bool
+
+- name: Check whether firewalld is active
+  ansible.builtin.service_facts:
+
+- name: Open dashboard port in firewalld
+  ansible.posix.firewalld:
+    port: "{{ linuxdb_dashboard_port }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+  become: true
+  when: >
+    linuxdb_dashboard_enabled | bool and
+    linuxdb_dashboard_manage_firewalld | bool and
+    'firewalld.service' in ansible_facts.services and
+    ansible_facts.services['firewalld.service'].state == 'running'
+
+- name: Stop and remove the dashboard service when disabled
+  ansible.builtin.systemd:
+    name: linuxdb-dashboard
+    state: stopped
+    enabled: false
+  become: true
+  when:
+    - not (linuxdb_dashboard_enabled | bool)
+    - ansible_facts.services is defined
+    - "'linuxdb-dashboard.service' in ansible_facts.services"
+  ignore_errors: true
+
+- name: Remove dashboard unit file and application directory when disabled
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/linuxdb-dashboard.service
+    - "{{ linuxdb_dashboard_app_dir }}"
+  become: true
+  when: not (linuxdb_dashboard_enabled | bool)

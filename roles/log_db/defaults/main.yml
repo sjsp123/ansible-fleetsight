@@ -1,0 +1,64 @@
+---
+# roles/log_db/defaults/main.yml
+
+# RHEL 8 ONLY. RHEL 8 packages PostgreSQL as a legacy dnf module with
+# several parallel streams (9.6, 10, 12, 13, 15) - the unversioned
+# postgresql-server/postgresql-contrib RPM names stay the same regardless
+# of which stream is enabled. Without any action the module defaults to
+# stream 10 (released 2017). This variable is used on RHEL 8 hosts only
+# to explicitly enable a newer, still-supported stream before install;
+# it is ignored on RHEL 9/10, where PostgreSQL isn't a legacy dnf module
+# and dnf just installs the current AppStream version directly. Check
+# `dnf module list postgresql` on your RHEL 8.10 host for the exact
+# streams available before changing this - see README "RHEL 8/9/10
+# differences".
+log_db_postgresql_stream: "15"
+
+# PostgreSQL database used to store centrally-collected log messages,
+# written to by roles/rsyslog_collector (when rsyslog_collector_db_enabled
+# is true) and read by roles/log_search_ui.
+log_db_name: syslog
+
+# Table that stores the log messages.
+log_db_table: systemevents
+
+# Table that stores "acknowledged" / suppressed repeated-alert pattern
+# fingerprints for the Insights page's "Top repeated / similar alerts"
+# table - see README "Suppressing known-noisy patterns". The reader role
+# below is granted narrow INSERT/SELECT/UPDATE/DELETE privileges on
+# ONLY this table (the main log table stays SELECT-only for that role).
+# UPDATE is required because of the app's INSERT ... ON CONFLICT DO
+# UPDATE usage on this table.
+log_db_suppressed_patterns_table: log_search_ui_suppressed_patterns
+
+# Database role rsyslog uses to INSERT incoming messages (INSERT-only
+# privilege on log_db_table). CHANGE THE PASSWORD before using this
+# outside a throwaway lab - see README "Securing credentials".
+log_db_writer_user: rsyslog
+log_db_writer_password: CHANGE_ME_rsyslog_writer
+
+# Read-only database role the search web front end (roles/log_search_ui)
+# uses to query messages (SELECT-only privilege). Also CHANGE THE PASSWORD.
+log_db_reader_user: log_search
+log_db_reader_password: CHANGE_ME_log_search_reader
+
+# How long to retain rows before the daily cleanup job deletes them.
+log_db_retention_days: 90
+
+# Whether the daily retention-cleanup systemd timer is installed.
+log_db_retention_cleanup_enabled: true
+
+# PostgreSQL only listens on localhost by default - the collector and
+# search UI are expected to run on the same host as the database. Change
+# this only if you deliberately want remote connections (e.g. a dedicated
+# DB host at work), and add matching entries to log_db_pg_hba_extra.
+log_db_listen_addresses: localhost
+
+# pg_hba.conf entries appended verbatim, managed as a single block. The
+# defaults below allow ONLY the writer and reader roles above to connect
+# over TCP from localhost with a password - nothing else is opened up.
+log_db_pg_hba_extra:
+  - "host    {{ log_db_name }}    {{ log_db_writer_user }}    127.0.0.1/32    scram-sha-256"
+  - "host    {{ log_db_name }}    {{ log_db_writer_user }}    ::1/128         scram-sha-256"
+  - "host    {{ log_db_name }}    {{ log_db_reader_user }}    127.0.0.1/32    scram-sha-256"
+  - "host    {{ log_db_name }}    {{ log_db_reader_user }}    ::1/128         scram-sha-256"

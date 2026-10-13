@@ -1,0 +1,108 @@
+---
+###############################################################################
+# linuxdb_reports: run diagnostic scripts against every host in the play,
+# save each one's raw output back on the control node as a timestamped
+# file per host per check. See README.md for the on-disk layout consumed
+# by roles/linuxdb_dashboard.
+###############################################################################
+
+- name: Generate a run timestamp for this host
+  ansible.builtin.set_fact:
+    linuxdb_report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+
+- name: Ensure sysstat is present (iostat for svr_check.sh DISK_IO)
+  ansible.builtin.package:
+    name: sysstat
+    state: present
+  become: true
+  when: linuxdb_reports_install_sysstat | bool
+
+- name: Ensure per-host, per-check data directories exist on the control node
+  ansible.builtin.file:
+    path: "{{ linuxdb_reports_data_dir }}/{{ inventory_hostname }}/{{ item.key }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ linuxdb_reports_checks }}"
+  loop_control:
+    label: "{{ item.key }}"
+  delegate_to: localhost
+
+- name: Copy check scripts to the managed host
+  ansible.builtin.copy:
+    src: "{{ item.script }}"
+    dest: "{{ linuxdb_reports_remote_tmp }}/{{ item.script }}"
+    mode: "0755"
+  loop: "{{ linuxdb_reports_checks }}"
+  loop_control:
+    label: "{{ item.key }}"
+  become: true
+
+- name: Run each check script
+  ansible.builtin.command:
+    cmd: "{{ linuxdb_reports_remote_tmp }}/{{ item.script }}"
+  register: linuxdb_report_raw
+  loop: "{{ linuxdb_reports_checks }}"
+  loop_control:
+    label: "{{ item.key }}"
+  become: true
+  changed_when: false
+  # These scripts intentionally exit non-zero to signal WARNING/CRITICAL
+  # findings (e.g. df_check.sh exits 1 when a filesystem is over
+  # threshold) - that's a result to report, not an ansible task failure,
+  # so we never fail the play on their return code. Whatever stdout was
+  # produced before any early exit is still saved below.
+  failed_when: false
+
+- name: Save each check's output on the control node with this run's timestamp
+  ansible.builtin.copy:
+    content: "{{ item.stdout }}\n"
+    dest: "{{ linuxdb_reports_data_dir }}/{{ inventory_hostname }}/{{ item.item.key }}/{{ linuxdb_report_timestamp }}.txt"
+    mode: "0644"
+  loop: "{{ linuxdb_report_raw.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  delegate_to: localhost
+
+- name: Record each check's exit code alongside its output
+  ansible.builtin.copy:
+    content: "{{ item.rc }}\n"
+    dest: "{{ linuxdb_reports_data_dir }}/{{ inventory_hostname }}/{{ item.item.key }}/{{ linuxdb_report_timestamp }}.rc"
+    mode: "0644"
+  loop: "{{ linuxdb_report_raw.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  delegate_to: localhost
+
+- name: Point 'latest' at this run for each check
+  ansible.builtin.copy:
+    content: "{{ linuxdb_report_timestamp }}\n"
+    dest: "{{ linuxdb_reports_data_dir }}/{{ inventory_hostname }}/{{ item.key }}/latest"
+    mode: "0644"
+  loop: "{{ linuxdb_reports_checks }}"
+  loop_control:
+    label: "{{ item.key }}"
+  delegate_to: localhost
+
+- name: Remove check scripts from the managed host
+  ansible.builtin.file:
+    path: "{{ linuxdb_reports_remote_tmp }}/{{ item.script }}"
+    state: absent
+  loop: "{{ linuxdb_reports_checks }}"
+  loop_control:
+    label: "{{ item.key }}"
+  become: true
+
+- name: Prune old runs beyond linuxdb_reports_keep_runs
+  ansible.builtin.shell: >
+    set -o pipefail;
+    cd {{ (linuxdb_reports_data_dir ~ '/' ~ inventory_hostname ~ '/' ~ item.key) | quote }} &&
+    ls -1 -- *.txt *.rc 2>/dev/null | sed 's/\.[a-z]*$//' | sort -u |
+    head -n -{{ linuxdb_reports_keep_runs }} |
+    xargs -r -I{} rm -f -- {}.txt {}.rc
+  args:
+    executable: /bin/bash
+  loop: "{{ linuxdb_reports_checks }}"
+  loop_control:
+    label: "{{ item.key }}"
+  delegate_to: localhost
+  changed_when: false

@@ -1,0 +1,12 @@
+# Managed by Ansible (roles/idm_healthcheck_watch) - do not edit by hand.
+# Kept as a separate settings module from idm_healthcheck_watch.py
+# itself, same reasoning as roles/disk_space_check's config.py.j2
+# split.
+
+MODE = "{{ idm_healthcheck_watch_mode }}"
+EXTRA_SOURCES = [
+{% for s in idm_healthcheck_watch_extra_sources %}
+    "{{ s }}",
+{% endfor %}
+]
+TIMEOUT_SECONDS = {{ idm_healthcheck_watch_timeout_seconds }}

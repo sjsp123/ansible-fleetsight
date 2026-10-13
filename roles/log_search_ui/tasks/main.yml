@@ -1,0 +1,233 @@
+---
+# roles/log_search_ui/tasks/main.yml
+#
+# Deploys a minimal, dependency-free web front end (a plain WSGI app,
+# served by Python's own stdlib wsgiref.simple_server - no httpd, no
+# mod_wsgi, no Flask) for searching the log_db database set up by
+# roles/log_db, so log messages and patterns can be searched across the
+# whole fleet instead of grepping flat files on each host. The only
+# package this needs beyond base RHEL is python3-psycopg2, from
+# BaseOS/AppStream - no EPEL, no third-party repos - so the whole stack
+# patches via dnf update on a subscribed RHEL host with only the
+# standard repos enabled.
+#
+# This role used to ALSO deploy an httpd + mod_wsgi variant serving the
+# same app.py side by side (for comparison). That variant has been
+# removed in favour of this one. The first block below cleans up
+# anything the old httpd variant and the old "-standalone"-named service
+# left behind, so re-running this role against a host that had the
+# previous version converges cleanly on just this one deployment.
+# httpd itself is NOT uninstalled automatically here (it may be in use
+# for something unrelated on the host) - see roles/log_search_ui/README.md
+# for the manual commands to remove it if nothing else needs it.
+
+- name: Check whether firewalld is active
+  ansible.builtin.service_facts:
+
+- name: Remove the old httpd vhost configuration deployed by a previous version of this role
+  ansible.builtin.file:
+    path: /etc/httpd/conf.d/log-search-ui.conf
+    state: absent
+  become: true
+
+- name: Stop and disable the old "-standalone"-named systemd service, if present
+  ansible.builtin.systemd:
+    name: log-search-ui-standalone
+    state: stopped
+    enabled: false
+  become: true
+  ignore_errors: true
+  when: >
+    ansible_facts.services is defined and
+    'log-search-ui-standalone.service' in ansible_facts.services
+
+- name: Remove the old "-standalone"-named unit file and its separate application directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/log-search-ui-standalone.service
+    - /opt/log_search_ui_standalone
+  become: true
+
+- name: Reload systemd after removing the old unit file
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+
+- name: Install the search UI's Python dependencies
+  ansible.builtin.package:
+    name:
+      - python3-psycopg2
+    state: present
+  become: true
+
+# Kerberos auth mode assumes krb5-workstation (kinit/kdestroy) is
+# already installed on a domain-joined host - this role never installs
+# it, only checks for it, same "check for, never install" pattern used
+# elsewhere in this repo for kinit/getcert/sssctl.
+- name: Check for kinit and kdestroy when Kerberos auth mode is enabled
+  ansible.builtin.shell: |
+    set -e
+    command -v {{ log_search_ui_auth_kerberos_kinit_path | quote }} >/dev/null
+    command -v {{ log_search_ui_auth_kerberos_kdestroy_path | quote }} >/dev/null
+  args:
+    executable: /bin/bash
+  register: log_search_ui_kerberos_tools_check
+  changed_when: false
+  failed_when: false
+  when: log_search_ui_auth_mode == 'kerberos'
+
+- name: Fail with a clear message if kinit/kdestroy are missing (krb5-workstation not installed)
+  ansible.builtin.fail:
+    msg: >-
+      log_search_ui_auth_mode is 'kerberos' but kinit/kdestroy
+      (krb5-workstation) were not found at the configured paths on this
+      host. This role never installs krb5-workstation for you - install
+      it from RHEL's own BaseOS/AppStream repos
+      (dnf install krb5-workstation) and ensure the host is
+      domain-joined (realm join / SSSD) before enabling Kerberos auth
+      mode.
+  when: >
+    log_search_ui_auth_mode == 'kerberos' and
+    log_search_ui_kerberos_tools_check is defined and
+    log_search_ui_kerberos_tools_check.rc is defined and
+    log_search_ui_kerberos_tools_check.rc != 0
+
+- name: Fail if Kerberos auth mode is enabled without a realm configured
+  ansible.builtin.fail:
+    msg: >-
+      log_search_ui_auth_mode is 'kerberos' but
+      log_search_ui_auth_kerberos_realm (or the shared
+      dashboard_auth_kerberos_realm) is empty. Set it to your Kerberos
+      realm name, e.g. LAB.EXAMPLE.COM or CORP.EXAMPLE.COM.
+  when: >
+    log_search_ui_auth_mode == 'kerberos' and
+    (log_search_ui_auth_kerberos_realm | default('')) == ''
+
+- name: Create unprivileged system account for the search UI service
+  ansible.builtin.user:
+    name: "{{ log_search_ui_user }}"
+    system: true
+    shell: /sbin/nologin
+    create_home: false
+  become: true
+
+- name: Create the search UI application directory
+  ansible.builtin.file:
+    path: "{{ log_search_ui_app_dir }}"
+    state: directory
+    owner: "{{ log_search_ui_user }}"
+    group: "{{ log_search_ui_user }}"
+    mode: "0750"
+  become: true
+
+- name: Remove a leftover httpd-era WSGI entry point, if this directory previously served httpd
+  ansible.builtin.file:
+    path: "{{ log_search_ui_app_dir }}/log_search.wsgi"
+    state: absent
+  become: true
+
+- name: Create the TLS certificate/key directory
+  ansible.builtin.file:
+    path: "{{ log_search_ui_tls_cert_path | dirname }}"
+    state: directory
+    owner: "{{ log_search_ui_user }}"
+    group: "{{ log_search_ui_user }}"
+    mode: "0750"
+  become: true
+  when: log_search_ui_tls_enabled | bool
+
+# Plain `openssl` command, not community.crypto (kept out of
+# requirements.yml on purpose - see README "TLS"). Guarded by `creates:`
+# so this only ever runs once per host: a cert already present at
+# log_search_ui_tls_cert_path is left untouched on every later run, same
+# idempotent "create if missing" pattern as log_db's postgresql-setup
+# --initdb task.
+- name: Generate a self-signed TLS certificate if one doesn't already exist
+  ansible.builtin.command:
+    cmd: >
+      openssl req -x509 -nodes
+      -newkey rsa:2048
+      -keyout {{ log_search_ui_tls_key_path }}
+      -out {{ log_search_ui_tls_cert_path }}
+      -days {{ log_search_ui_tls_cert_days }}
+      -subj /CN={{ log_search_ui_tls_cn }}
+    creates: "{{ log_search_ui_tls_cert_path }}"
+  become: true
+  when: >
+    log_search_ui_tls_enabled | bool and
+    log_search_ui_tls_generate_self_signed | bool
+
+- name: Set ownership and permissions on the generated TLS cert/key
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: "{{ log_search_ui_user }}"
+    group: "{{ log_search_ui_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ log_search_ui_tls_cert_path }}", mode: "0644" }
+    - { path: "{{ log_search_ui_tls_key_path }}", mode: "0600" }
+  become: true
+  when: log_search_ui_tls_enabled | bool
+  notify: Restart log-search-ui
+
+- name: Deploy the database connection settings
+  ansible.builtin.template:
+    src: config.py.j2
+    dest: "{{ log_search_ui_app_dir }}/config.py"
+    owner: "{{ log_search_ui_user }}"
+    group: "{{ log_search_ui_user }}"
+    mode: "0640"
+  become: true
+  notify: Restart log-search-ui
+
+- name: Deploy the search application (plain WSGI, no framework)
+  ansible.builtin.copy:
+    src: app.py
+    dest: "{{ log_search_ui_app_dir }}/app.py"
+    owner: "{{ log_search_ui_user }}"
+    group: "{{ log_search_ui_user }}"
+    mode: "0640"
+  become: true
+  notify: Restart log-search-ui
+
+- name: Deploy the standalone stdlib WSGI server runner
+  ansible.builtin.copy:
+    src: wsgi_standalone_server.py
+    dest: "{{ log_search_ui_app_dir }}/wsgi_standalone_server.py"
+    owner: "{{ log_search_ui_user }}"
+    group: "{{ log_search_ui_user }}"
+    mode: "0750"
+  become: true
+  notify: Restart log-search-ui
+
+- name: Deploy the search UI's systemd unit
+  ansible.builtin.template:
+    src: log-search-ui.service.j2
+    dest: /etc/systemd/system/log-search-ui.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Restart log-search-ui
+
+- name: Ensure the search UI service is enabled and running
+  ansible.builtin.systemd:
+    name: log-search-ui
+    state: started
+    enabled: true
+    daemon_reload: true
+  become: true
+
+- name: Open search UI port in firewalld
+  ansible.posix.firewalld:
+    port: "{{ log_search_ui_port }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+  become: true
+  when: >
+    ansible_facts.services is defined and
+    'firewalld.service' in ansible_facts.services and
+    ansible_facts.services['firewalld.service'].state == 'running'

@@ -1,0 +1,39 @@
+---
+# group_vars/homelab.yml
+#
+# Overrides that apply ONLY to hosts in the inventory's [homelab] group
+# (see inventory.example.ini "Environment group"). Give your home lab's
+# local, gitignored `inventory` file's collector host membership in
+# `[homelab]` for this file to take effect.
+#
+# Currently this restates the safe role defaults explicitly (and the
+# lab's NTP topology), so the home lab's intended security posture is
+# version-controlled and visible here in git, rather than being
+# "whatever the role defaults happen to be this week" or a hand-edit
+# nobody remembers making. See README.md "Environments".
+log_search_ui_tls_enabled: true
+log_search_ui_auth_enabled: true
+linuxdb_dashboard_tls_enabled: true
+linuxdb_dashboard_auth_enabled: true
+
+# --- Time synchronization topology (lab) -----------------------------
+# Lab clients sync from idm1 (the IdM server runs chronyd and serves
+# NTP on both lab networks), falling back to the public pool. idm1
+# itself must NOT use itself as a source - it tracks the public pool
+# directly. Resilience rationale: after the 2026-10 lab network
+# disruption, per-host dependence on outbound DNS + public pool NTP
+# turned one network blip into a fleet-wide time outage; an internal
+# source removes that dependency for the four clients.
+#
+# timesync_ntp_server_hosts lists the host(s) whose chronyd must SERVE
+# time (an "allow" directive per subnet - RHEL chronyd refuses clients
+# by default, and the timesync role only configures the client side).
+# timesync_ntp_server_allow_subnets are the subnets allowed to query.
+timesync_ntp_hostnames: >-
+  {{ (['idm1.lab.example.com'] if inventory_hostname != 'idm1.lab.example.com' else [])
+     + ['0.rhel.pool.ntp.org', '1.rhel.pool.ntp.org'] }}
+timesync_ntp_server_hosts:
+  - idm1.lab.example.com
+timesync_ntp_server_allow_subnets:
+  - 192.168.100.0/24
+  - 192.168.187.0/24

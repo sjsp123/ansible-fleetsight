@@ -1,0 +1,44 @@
+---
+# roles/system_poweroff/tasks/verify_network.yml
+#
+# Included for hosts NOT in [hpe_ilo_hosts] - typically VMs with no
+# BMC to query out-of-band. See README "What this does not cover" for
+# why this is a materially weaker guarantee than the BMC check: it
+# only confirms the host stopped answering on a TCP port, not that the
+# hypervisor has actually powered the VM off.
+#
+# IMPORTANT: this task runs delegated (see delegate_to below), and
+# under delegation `ansible_host` resolves to the DELEGATE's own
+# connection address, not the target's - a bare `ansible_host` here
+# would silently check the control node itself (always reachable),
+# making confirmed_off permanently false for every non-BMC host. Must
+# use the explicit hostvars[inventory_hostname] lookup instead, which
+# stays pinned to the original target regardless of delegation.
+
+- name: Wait for this host to stop answering on port {{ system_poweroff_network_check_port }}
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}"
+    port: "{{ system_poweroff_network_check_port }}"
+    state: stopped
+    timeout: "{{ system_poweroff_verify_timeout_seconds }}"
+  delegate_to: "{{ system_poweroff_verify_delegate_host }}"
+  become: false
+  register: _system_poweroff_wait_result
+  ignore_errors: true
+
+- name: Record the verification outcome
+  ansible.builtin.set_fact:
+    system_poweroff_result:
+      host: "{{ inventory_hostname }}"
+      method: "network:port{{ system_poweroff_network_check_port }}"
+      confirmed_off: "{{ not (_system_poweroff_wait_result.failed | default(true)) }}"
+
+- name: Fail this host if it never stopped responding within the timeout
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} was still answering on port
+      {{ system_poweroff_network_check_port }} after
+      {{ system_poweroff_verify_timeout_seconds }}s - see README "What
+      this does not cover" (network reachability only, not a confirmed
+      hypervisor-level power state).
+  when: not system_poweroff_result.confirmed_off

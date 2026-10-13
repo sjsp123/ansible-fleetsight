@@ -1,0 +1,18 @@
+# Managed by Ansible (roles/log_alerter) - do not edit by hand.
+# Kept as a separate settings module from log_alerter.py itself, same
+# reasoning as roles/log_search_ui's config.py.j2/app.py split.
+
+DB_HOST = "{{ log_alerter_db_host }}"
+DB_NAME = "{{ log_alerter_db_name }}"
+DB_TABLE = "{{ log_alerter_db_table }}"
+DB_USER = "{{ log_alerter_db_user }}"
+DB_PASSWORD = "{{ log_alerter_db_password }}"
+
+SEVERITY_THRESHOLD = {{ log_alerter_severity_threshold }}
+MAX_ROWS_PER_EMAIL = {{ log_alerter_max_rows_per_email }}
+STATE_FILE = "{{ log_alerter_state_file }}"
+
+EMAIL_TO = "{{ log_alerter_email_to }}"
+EMAIL_FROM = "{{ log_alerter_email_from }}"
+SMTP_HOST = "{{ log_alerter_smtp_host }}"
+SMTP_PORT = {{ log_alerter_smtp_port }}

@@ -1,0 +1,233 @@
+---
+# roles/rsyslog_collector/tasks/main.yml
+#
+# Configures this host as the central rsyslog collector: opens a TCP
+# syslog listener and stores each remote host's messages in its own file
+# under rsyslog_remote_log_dir.
+
+- name: Ensure rsyslog is installed and enabled
+  ansible.builtin.package:
+    name: rsyslog
+    state: present
+  become: true
+
+- name: Create directory for received remote logs
+  ansible.builtin.file:
+    path: "{{ rsyslog_remote_log_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  become: true
+
+- name: Install rsyslog gtls (GnuTLS) stream driver for TLS-encrypted syslog
+  ansible.builtin.package:
+    name: rsyslog-gnutls
+    state: present
+  become: true
+  when: rsyslog_tls_enabled | bool
+
+- name: Create the TLS certificate/key directory
+  ansible.builtin.file:
+    path: "{{ rsyslog_tls_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when: rsyslog_tls_enabled | bool
+
+# Plain `openssl` commands, not community.crypto (kept out of
+# requirements.yml on purpose, same reasoning as roles/linuxdb_dashboard
+# and roles/log_search_ui's self-signed cert generation). Guarded by
+# `creates:` so this only ever runs once per host: files already present
+# at these paths are left untouched on every later run.
+- name: Generate the self-signed lab CA (key + certificate) if one doesn't already exist
+  ansible.builtin.command:
+    cmd: >
+      openssl req -x509 -nodes
+      -newkey rsa:4096 -sha256
+      -days {{ rsyslog_tls_ca_days }}
+      -keyout {{ rsyslog_tls_ca_key_path }}
+      -out {{ rsyslog_tls_ca_cert_path }}
+      -subj /CN=Rsyslog-Lab-CA
+    creates: "{{ rsyslog_tls_ca_cert_path }}"
+  become: true
+  when: rsyslog_tls_enabled | bool and rsyslog_tls_generate_certs | bool
+
+- name: Set ownership and permissions on the generated lab CA files
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ rsyslog_tls_ca_cert_path }}", mode: "0644" }
+    - { path: "{{ rsyslog_tls_ca_key_path }}", mode: "0600" }
+  become: true
+  when: rsyslog_tls_enabled | bool and rsyslog_tls_generate_certs | bool
+
+- name: Deploy the subjectAltName extension file for the collector's certificate
+  ansible.builtin.copy:
+    dest: "{{ rsyslog_tls_dir }}/rsyslog-collector-ext.cnf"
+    owner: root
+    group: root
+    mode: "0644"
+    content: "subjectAltName=DNS:{{ rsyslog_tls_cn }}\n"
+  become: true
+  when: rsyslog_tls_enabled | bool and rsyslog_tls_generate_certs | bool
+
+- name: Generate the collector's private key and certificate signing request if missing
+  ansible.builtin.command:
+    cmd: >
+      openssl req -new -nodes
+      -newkey rsa:2048 -sha256
+      -keyout {{ rsyslog_tls_key_path }}
+      -out {{ rsyslog_tls_dir }}/rsyslog-collector.csr
+      -subj /CN={{ rsyslog_tls_cn }}
+    creates: "{{ rsyslog_tls_key_path }}"
+  become: true
+  when: rsyslog_tls_enabled | bool and rsyslog_tls_generate_certs | bool
+
+- name: Sign the collector's certificate with the lab CA if missing
+  ansible.builtin.command:
+    cmd: >
+      openssl x509 -req -sha256
+      -in {{ rsyslog_tls_dir }}/rsyslog-collector.csr
+      -CA {{ rsyslog_tls_ca_cert_path }}
+      -CAkey {{ rsyslog_tls_ca_key_path }}
+      -CAcreateserial
+      -out {{ rsyslog_tls_cert_path }}
+      -days {{ rsyslog_tls_cert_days }}
+      -extfile {{ rsyslog_tls_dir }}/rsyslog-collector-ext.cnf
+    creates: "{{ rsyslog_tls_cert_path }}"
+  become: true
+  when: rsyslog_tls_enabled | bool and rsyslog_tls_generate_certs | bool
+
+- name: Set ownership and permissions on the collector's own cert/key
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ rsyslog_tls_cert_path }}", mode: "0644" }
+    - { path: "{{ rsyslog_tls_key_path }}", mode: "0600" }
+  become: true
+  when: rsyslog_tls_enabled | bool and rsyslog_tls_generate_certs | bool
+  notify: Restart rsyslog
+
+- name: Deploy collector configuration (TCP listener + per-host storage)
+  ansible.builtin.template:
+    src: 10-remote-collector.conf.j2
+    dest: /etc/rsyslog.d/10-remote-collector.conf
+    owner: root
+    group: root
+    mode: "0640"
+  become: true
+  notify: Restart rsyslog
+
+- name: Expose the collector's TLS CN as a fact for roles/rsyslog_client
+  ansible.builtin.set_fact:
+    rsyslog_tls_cn: "{{ rsyslog_tls_cn }}"
+  when: rsyslog_tls_enabled | bool
+  # rsyslog_tls_cn on its own is only a role DEFAULT, which is not reliably
+  # visible via hostvars[<this host>] from roles/rsyslog_client running in
+  # a later play - re-registering it here as a genuine fact (same value,
+  # promoted to fact precedence) fixes rsyslog_tls_permitted_peer
+  # resolving empty on the client side. Mirrors the CA-cert-content fact
+  # below, which already worked because it was a set_fact from the start.
+
+- name: Read the collector's CA certificate content (for distribution to clients)
+  ansible.builtin.slurp:
+    src: "{{ rsyslog_tls_ca_cert_path }}"
+  register: rsyslog_tls_ca_cert_slurp
+  become: true
+  when: rsyslog_tls_enabled | bool
+
+- name: Expose the CA certificate content as a fact for roles/rsyslog_client
+  ansible.builtin.set_fact:
+    rsyslog_tls_ca_cert_content: "{{ rsyslog_tls_ca_cert_slurp.content | b64decode }}"
+  when: rsyslog_tls_enabled | bool
+  # Visible to roles/rsyslog_client via hostvars[<this host>] within the
+  # SAME playbook run only (no fact caching needed/used) - relies on
+  # playbooks/centralized_logging.yml always running the log_collector
+  # play before the log_clients play, exactly like rsyslog_client's own
+  # "Resolve the collector's address" task already relies on
+  # rsyslog_collector_advertise_host being readable via hostvars.
+
+- name: Install PostgreSQL output module for rsyslog
+  ansible.builtin.package:
+    name: rsyslog-pgsql
+    state: present
+  become: true
+  when: rsyslog_collector_db_enabled | bool
+
+- name: Deploy collector database output configuration
+  ansible.builtin.template:
+    src: 05-remote-collector-db.conf.j2
+    dest: /etc/rsyslog.d/05-remote-collector-db.conf
+    owner: root
+    group: root
+    mode: "0640"
+  become: true
+  when: rsyslog_collector_db_enabled | bool
+  notify: Restart rsyslog
+  # Loaded as 05- (before 10-remote-collector.conf's flat-file rule) on
+  # purpose: /etc/rsyslog.d/*.conf is included in lexical filename order,
+  # and 10-remote-collector.conf's matching if-block ends with `stop`,
+  # which halts all further rule processing for that message. If this
+  # database action were numbered after 10- (as 15-, its previous name),
+  # every remote message would be written to the flat file and then
+  # discarded by `stop` before ever reaching this ompgsql action - the
+  # database would silently stay empty forever with no error anywhere.
+
+- name: Remove collector database output configuration when disabled
+  ansible.builtin.file:
+    path: /etc/rsyslog.d/05-remote-collector-db.conf
+    state: absent
+  become: true
+  when: not (rsyslog_collector_db_enabled | bool)
+  notify: Restart rsyslog
+
+- name: Remove old pre-rename database output configuration path
+  ansible.builtin.file:
+    path: /etc/rsyslog.d/15-remote-collector-db.conf
+    state: absent
+  become: true
+  notify: Restart rsyslog
+
+- name: Check whether firewalld is active
+  ansible.builtin.service_facts:
+
+- name: Open collector port in firewalld
+  ansible.posix.firewalld:
+    port: "{{ rsyslog_collector_port }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+  become: true
+  when: >
+    'firewalld.service' in ansible_facts.services and
+    ansible_facts.services['firewalld.service'].state == 'running'
+
+- name: Set up daily logrotate for received remote logs
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/remote-logs
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {{ rsyslog_remote_log_dir }}/*/*.log {
+          daily
+          rotate {{ rsyslog_remote_log_retain_days }}
+          compress
+          delaycompress
+          missingok
+          notifempty
+          sharedscripts
+          postrotate
+              /usr/bin/systemctl kill -s HUP rsyslog.service >/dev/null 2>&1 || true
+          endscript
+      }
+  become: true

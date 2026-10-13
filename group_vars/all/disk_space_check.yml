@@ -1,0 +1,20 @@
+---
+# group_vars/all/disk_space_check.yml
+# Fleet-wide overrides for roles/disk_space_check (see that role's
+# defaults/main.yml for the full variable list). Uncomment/edit as
+# needed - this follows the same pattern as
+# group_vars/all/service_failure_watcher.yml.
+
+# Opt-in toggle - defaults to false/off in roles/disk_space_check's own
+# defaults; this file flips it on for playbooks/centralized_logging.yml.
+# Applies to every [log_clients] host (including the collector itself).
+disk_space_check_enabled: true
+
+# disk_space_check_poll_interval_seconds: 300
+# disk_space_check_space_warn_threshold: 85
+# disk_space_check_space_crit_threshold: 95
+# disk_space_check_inode_warn_threshold: 85
+# disk_space_check_inode_crit_threshold: 95
+# Deliberately matches roles/linuxdb_reports/files/df_check.sh's own
+# WARN_THRESHOLD/CRIT_THRESHOLD (85/95) - see
+# roles/disk_space_check/README.md "How it works".

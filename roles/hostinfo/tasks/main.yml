@@ -1,0 +1,89 @@
+---
+###############################################################################
+# Core identity — structural, rarely changes
+###############################################################################
+
+- name: Build OS string
+  set_fact:
+    host_os_display: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+- name: Build core host identity
+  set_fact:
+    host_core:
+      # Deliberately inventory_hostname, NOT ansible_hostname - the
+      # linuxdb_dashboard's "Other hosts with report history" section
+      # (roles/linuxdb_dashboard/files/app.py, render_home()) matches
+      # hostinfo.csv's HOSTNAME column against the linuxdb_reports/
+      # config_snapshot directory names on disk, and both of those roles
+      # key their per-host directories by inventory_hostname (see
+      # roles/linuxdb_reports/tasks/main.yml and
+      # roles/config_snapshot/tasks/main.yml). ansible_hostname is the
+      # OS-reported hostname fact, which can legitimately differ from
+      # inventory_hostname (short vs. FQDN, different case, etc.) even
+      # when it's clearly the same host to a human - that mismatch was
+      # previously causing hosts to show up as false positives under
+      # "Other hosts with report history" despite already having a
+      # current hostinfo.csv row. Using inventory_hostname here keeps
+      # all three subsystems (hostinfo, linuxdb_reports, config_snapshot)
+      # keyed by the exact same identifier.
+      hostname: "{{ inventory_hostname }}"
+      fqdn: "{{ ansible_fqdn | default(inventory_hostname) }}"
+      ip: "{{ ansible_default_ipv4.address | default('UNKNOWN') }}"
+      os: "{{ host_os_display | trim }}"
+
+###############################################################################
+# Generic, data-driven checks
+###############################################################################
+
+- name: Run host checks
+  ansible.builtin.shell: "{{ item.cmd }}"
+  register: host_check_raw
+  changed_when: false
+  failed_when: false
+  loop: "{{ host_checks }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: >-
+    item.only_if_in_list is not defined
+    or
+    (
+      inventory_hostname | lower
+      in
+      (
+        lookup('vars', item.only_if_in_list)
+        | map('lower')
+        | list
+      )
+    )
+
+- name: Collect check results into a dict
+  set_fact:
+    host_check_results: >-
+      {{
+        host_check_results | default({})
+        | combine({
+            item.item.key: (item.stdout | default('') | trim)
+          })
+      }}
+  loop: "{{ host_check_raw.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when:
+    - item.item is defined
+    - item.item.key is defined
+
+###############################################################################
+# Merge core identity + check results
+###############################################################################
+
+- name: Merge core identity + check results
+  set_fact:
+    host_report: "{{ host_core | combine(host_check_results | default({})) }}"
+
+###############################################################################
+# Generate CSV report
+###############################################################################
+
+- name: Generate report
+  include_tasks: report.yml
+  run_once: true

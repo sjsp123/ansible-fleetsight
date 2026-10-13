@@ -1,0 +1,67 @@
+---
+# =============================================================================
+# playbooks/silence_setroubleshoot.yml
+#
+# Silence setroubleshootd AVC noise (Red Hat KB 2762771) and set SELinux
+# to Permissive on non-production PoC and home-lab hosts.
+#
+# Permissive keeps AVCs in /var/log/audit/audit.log for forensics but stops
+# them being enforced. The runtime switch is via setenforce(1) so NO REBOOT
+# is required.
+#
+# Usage (interactive - you will be prompted for the target):
+#   ansible-playbook playbooks/silence_setroubleshoot.yml
+#   ansible-playbook playbooks/silence_setroubleshoot.yml --check --diff
+#
+# Usage (unattended - pass target_host explicitly to skip vars_prompt,
+# matching the convention in playbooks/hostinfo.yml):
+#   ansible-playbook playbooks/silence_setroubleshoot.yml -e target_host=homelab
+#   ansible-playbook playbooks/silence_setroubleshoot.yml -e target_host=work
+#   ansible-playbook playbooks/silence_setroubleshoot.yml -e target_host=lab
+#   ansible-playbook playbooks/silence_setroubleshoot.yml \
+#       -e target_host=admin1.lab.example.com
+#
+# The prompt below defaults to `all` (same convention as
+# playbooks/hostinfo.yml) rather than defaulting into a specific
+# group - the pre_task scope guard is what actually keeps this off
+# production, not the prompt default, so it stays honest about what
+# pressing Enter really does.
+# =============================================================================
+
+- name: Silence setroubleshoot and set SELinux to Permissive (PoC/lab only)
+  hosts: "{{ target_host }}"
+  become: true
+  gather_facts: true
+
+  vars_prompt:
+    - name: target_host
+      prompt: "Enter target host or inventory group"
+      private: no
+      default: "all"
+      # default: "all" matches playbooks/hostinfo.yml's prompt exactly -
+      # the pre_task assert below (not this default) is what actually
+      # restricts execution to homelab/work, so `all` accurately reflects
+      # that pressing Enter doesn't secretly narrow the scope for you.
+      # For unattended/cron runs, ALWAYS pass -e target_host=<...>
+      # explicitly rather than relying on this default alone - Ansible skips
+      # vars_prompt entirely when the var is already supplied via --extra-vars,
+      # which is the reliable, version-proof way to guarantee a non-interactive
+      # run never blocks waiting on a stdin prompt that cron can't answer.
+
+  pre_tasks:
+    - name: Refuse to run without an explicit non-production target group
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in (groups['homelab'] | default([]))
+              + (groups['lab'] | default([]))
+        fail_msg: >-
+          {{ inventory_hostname }} is not in the homelab or lab group.
+          This playbook is restricted to non-production hosts.
+        # `lab` is accepted alongside `homelab` as a recognized
+        # non-production group name - some inventories use it as their
+        # own local convention for the non-collector home-lab hosts,
+        # and there is no reason to force renaming/regrouping real
+        # inventory just to satisfy this guard's naming choice.
+
+  roles:
+    - role: silence_setroubleshoot

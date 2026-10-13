@@ -1,0 +1,66 @@
+---
+# roles/disk_space_watcher/defaults/main.yml
+#
+# Centralized, fleet-wide email alerting the moment ANY [log_clients]
+# host's disk space or inode usage (checked locally by
+# roles/disk_space_check) crosses its configured threshold - no
+# per-host mail relay required. Polls the same log_db database
+# roles/log_alerter and roles/service_failure_watcher read, matching
+# roles/disk_space_check's own fixed alert wording - see README.md
+# "How it works".
+#
+# This role is only ever deployed to [log_collector] (see
+# playbooks/centralized_logging.yml) - it reads log_db locally and
+# relies on roles/rsyslog_client already forwarding every host's
+# journald content (including roles/disk_space_check's syslog
+# messages) to this collector.
+
+# Opt-in, matching the pattern used by roles/service_failure_watcher,
+# roles/host_availability_watcher, etc: this role's own default is
+# false; group_vars/all/disk_space_watcher.yml flips it on fleet-wide
+# by default in this repo.
+disk_space_watcher_enabled: false
+
+# Poll cadence. Independent of, and much shorter than,
+# disk_space_check_poll_interval_seconds (how often each host re-runs
+# its own local check).
+disk_space_watcher_poll_interval_seconds: 60
+
+# Hard cap on how many individual breaches are listed in a single
+# alert email body, in case several land in the same poll window.
+disk_space_watcher_max_rows_per_email: 50
+
+# Where the "last row already alerted on" watermark is persisted
+# between runs (a single JSON file, not the database itself - this
+# keeps the role from needing any write privilege on log_db at all; it
+# reuses the existing SELECT-only log_db_reader_user/_password, same
+# as roles/log_search_ui, roles/log_alerter, and
+# roles/service_failure_watcher).
+disk_space_watcher_state_dir: /var/lib/disk_space_watcher
+disk_space_watcher_state_file: "{{ disk_space_watcher_state_dir }}/state.json"
+
+# Unprivileged system account the timer/service runs as.
+disk_space_watcher_user: disk_space_watch
+
+disk_space_watcher_app_dir: /opt/disk_space_watcher
+
+# Read-only database connection - defaults to the matching log_db_*
+# variables (same pattern roles/log_alerter/log_search_ui/
+# service_failure_watcher already use) so this stays in sync
+# automatically as long as you only override the log_db_*/
+# rsyslog_collector_db_host versions, not these directly.
+disk_space_watcher_db_host: "{{ rsyslog_collector_db_host | default('localhost') }}"
+disk_space_watcher_db_name: "{{ log_db_name | default('syslog') }}"
+disk_space_watcher_db_table: "{{ log_db_table | default('systemevents') }}"
+disk_space_watcher_db_user: "{{ log_db_reader_user | default('log_search') }}"
+disk_space_watcher_db_password: "{{ log_db_reader_password | default('CHANGE_ME_log_search_reader') }}"
+
+# Mail delivery - see README.md "Mail delivery": this always talks to
+# the LOCAL mail transport agent on disk_space_watcher_smtp_host (the
+# log_collector's own MTA, e.g. admin1's Postfix), never an external
+# relay directly, so no relay credentials are needed or stored here.
+disk_space_watcher_email_to:
+  - root
+disk_space_watcher_email_from: "rhel-alerts@{{ ansible_fqdn | default(ansible_hostname) }}"
+disk_space_watcher_smtp_host: localhost
+disk_space_watcher_smtp_port: 25

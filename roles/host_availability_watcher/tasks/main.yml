@@ -1,0 +1,83 @@
+---
+# roles/host_availability_watcher/tasks/main.yml
+#
+# Deploys a small, pure-stdlib active heartbeat poller that pings and
+# TCP-checks the SSH port of every host in host_availability_watcher_hosts
+# directly from this collector, and emails a batched alert whenever a
+# host's availability state changes - see README.md. Only ever run
+# against [log_collector].
+
+- name: Install iputils (ping binary - RHEL BaseOS/AppStream, present by default on most installs)
+  ansible.builtin.package:
+    name: iputils
+    state: present
+  become: true
+
+- name: Create the unprivileged host_availability_watcher system account
+  ansible.builtin.user:
+    name: "{{ host_availability_watcher_user }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ host_availability_watcher_app_dir }}"
+    create_home: false
+  become: true
+
+- name: Create the app and state directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ host_availability_watcher_user }}"
+    group: "{{ host_availability_watcher_user }}"
+    mode: "0750"
+  loop:
+    - "{{ host_availability_watcher_app_dir }}"
+    - "{{ host_availability_watcher_state_dir }}"
+  become: true
+
+- name: Deploy the config file
+  ansible.builtin.template:
+    src: config.py.j2
+    dest: "{{ host_availability_watcher_app_dir }}/config.py"
+    owner: "{{ host_availability_watcher_user }}"
+    group: "{{ host_availability_watcher_user }}"
+    mode: "0640"
+  become: true
+
+- name: Deploy the poller script
+  ansible.builtin.copy:
+    src: host_availability_watcher.py
+    dest: "{{ host_availability_watcher_app_dir }}/host_availability_watcher.py"
+    owner: "{{ host_availability_watcher_user }}"
+    group: "{{ host_availability_watcher_user }}"
+    mode: "0750"
+  become: true
+
+- name: Deploy the systemd service unit
+  ansible.builtin.template:
+    src: host-availability-watcher.service.j2
+    dest: /etc/systemd/system/host-availability-watcher.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd
+
+- name: Deploy the systemd timer unit
+  ansible.builtin.template:
+    src: host-availability-watcher.timer.j2
+    dest: /etc/systemd/system/host-availability-watcher.timer
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd
+
+- name: Apply systemd unit changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the host-availability-watcher timer
+  ansible.builtin.systemd:
+    name: host-availability-watcher.timer
+    state: started
+    enabled: true
+  become: true

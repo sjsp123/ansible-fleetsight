@@ -1,0 +1,160 @@
+---
+- name: Collect sudo access rules
+  # Runs fleet-wide by default - use --limit <group-or-host> to scope it.
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+
+    - name: Find sudoers.d files
+      find:
+        paths: /etc/sudoers.d
+        file_type: file
+      register: sudoers_d
+      failed_when: false
+
+    - name: Build sudo file list
+      set_fact:
+        sudo_files: >-
+          {{
+            ['/etc/sudoers'] +
+            (sudoers_d.files | default([]) | map(attribute='path') | list)
+          }}
+
+    - name: Extract sudo access data
+      shell: |
+        for file in {{ sudo_files | join(' ') }}
+        do
+          [ -f "$file" ] || continue
+
+          awk -v host="{{ inventory_hostname }}" '
+          /^[[:space:]]*#/ {next}
+          /^[[:space:]]*$/ {next}
+
+          {
+            account=$1
+
+            # Ignore sudo config noise
+            if (account ~ /^Defaults/) next
+            if (account ~ /^Cmnd_Alias/) next
+            if (account ~ /^User_Alias/) next
+            if (account ~ /^Host_Alias/) next
+            if (account ~ /^Runas_Alias/) next
+
+            type="User"
+
+            # Handle groups
+            if (substr(account,1,1)=="%") {
+              type="Group"
+              account=substr(account,2)
+            }
+
+            gsub(/"/,"",account)
+
+            # Exclusions
+            if (account=="root") next
+            if (account=="wheel") next
+            if (account=="svc_ansible") next
+
+            # RunAs extraction
+            runas=""
+
+            if (match($0, /\([^)]*\)/)) {
+              runas=substr($0,RSTART+1,RLENGTH-2)
+            }
+
+            # Root equivalency check
+            root_equiv="NO"
+
+            if ($0 ~ /ALL=\(ALL\)/ ||
+                $0 ~ /ALL=\(ALL:ALL\)/ ||
+                $0 ~ /NOPASSWD:[[:space:]]*ALL/)
+              root_equiv="YES"
+
+            # NOPASSWD check
+            nopasswd="NO"
+
+            if ($0 ~ /NOPASSWD/)
+              nopasswd="YES"
+
+            # AD vs Local
+            adlocal="Local"
+
+            if (account ~ /@/ ||
+                account ~ /\\/ ||
+                account ~ /corp_/ ||
+                account ~ /dty_/)
+              adlocal="AD"
+
+            # Compliance assessment
+            compliance="INFO"
+
+            if (root_equiv=="YES") {
+
+              if (type=="Group" &&
+                 (account ~ /linuxadmin/i ||
+                  account ~ /InfraLinuxAdmins/i ||
+                  account ~ /INFRA-OPS/i)) {
+
+                compliance="PASS"
+
+              } else if (type=="User") {
+
+                compliance="WARNING"
+
+              } else {
+
+                compliance="REVIEW"
+              }
+
+            } else {
+
+              compliance="INFO"
+            }
+
+            printf("%s,\"%s\",%s,\"%s\",\"%s\",%s,%s,%s,%s,\"%s\"\n",
+                   host,
+                   FILENAME,
+                   type,
+                   account,
+                   runas,
+                   root_equiv,
+                   nopasswd,
+                   adlocal,
+                   compliance,
+                   $0)
+
+          }' "$file"
+
+        done
+      register: sudo_audit
+      changed_when: false
+
+- name: Build consolidated CSV report
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    report_file: "/var/tmp/sudo_audit_report.csv"
+
+  tasks:
+
+    - name: Create CSV report
+      copy:
+        dest: "{{ report_file }}"
+        # 0600: this report lists every account with root-equivalent/NOPASSWD
+        # sudo access per host - privileged-access data, not for world-read
+        # in a shared /var/tmp.
+        mode: "0600"
+        content: |
+          Hostname,File,AccountType,Account,RunAs,RootEquivalent,NOPASSWD,DirectoryType,ComplianceFlag,Rule
+          {% for host in groups['all'] %}
+          {% for line in hostvars[host].sudo_audit.stdout_lines | default([]) %}
+          {{ line }}
+          {% endfor %}
+          {% endfor %}
+
+    - name: Display report location
+      debug:
+        msg: "Sudo audit report written to {{ report_file }}"

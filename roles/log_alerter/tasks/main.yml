@@ -1,0 +1,81 @@
+---
+# roles/log_alerter/tasks/main.yml
+#
+# Deploys a small stdlib+psycopg2 poller that emails a batched summary
+# whenever new rows land in log_db at or above log_alerter_severity_
+# threshold, run on a short systemd timer - see README.md.
+
+- name: Install python3-psycopg2 (RHEL BaseOS/AppStream - same package roles/log_db already installs)
+  ansible.builtin.package:
+    name: python3-psycopg2
+    state: present
+  become: true
+
+- name: Create the unprivileged log_alerter system account
+  ansible.builtin.user:
+    name: "{{ log_alerter_user }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ log_alerter_app_dir }}"
+    create_home: false
+  become: true
+
+- name: Create the app and state directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ log_alerter_user }}"
+    group: "{{ log_alerter_user }}"
+    mode: "0750"
+  loop:
+    - "{{ log_alerter_app_dir }}"
+    - "{{ log_alerter_state_dir }}"
+  become: true
+
+- name: Deploy the config file
+  ansible.builtin.template:
+    src: config.py.j2
+    dest: "{{ log_alerter_app_dir }}/config.py"
+    owner: "{{ log_alerter_user }}"
+    group: "{{ log_alerter_user }}"
+    mode: "0640"
+  become: true
+
+- name: Deploy the poller script
+  ansible.builtin.copy:
+    src: log_alerter.py
+    dest: "{{ log_alerter_app_dir }}/log_alerter.py"
+    owner: "{{ log_alerter_user }}"
+    group: "{{ log_alerter_user }}"
+    mode: "0750"
+  become: true
+
+- name: Deploy the systemd service unit
+  ansible.builtin.template:
+    src: log-alerter.service.j2
+    dest: /etc/systemd/system/log-alerter.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd
+
+- name: Deploy the systemd timer unit
+  ansible.builtin.template:
+    src: log-alerter.timer.j2
+    dest: /etc/systemd/system/log-alerter.timer
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd
+
+- name: Apply systemd unit changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the log-alerter timer
+  ansible.builtin.systemd:
+    name: log-alerter.timer
+    state: started
+    enabled: true
+  become: true

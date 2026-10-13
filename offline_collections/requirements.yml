@@ -1,0 +1,5 @@
+collections:
+  - name: offline_collections/ansible-posix-2.2.2.tar.gz
+    version: 2.2.2
+  - name: offline_collections/community-postgresql-4.2.0.tar.gz
+    version: 4.2.0

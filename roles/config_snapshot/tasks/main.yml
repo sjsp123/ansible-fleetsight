@@ -1,0 +1,154 @@
+---
+# config_snapshot: read-only config file capture with per-run history.
+#
+# For every host in the play, reads each path in config_snapshot_files
+# (if it exists and is a regular file) and stores a timestamped copy,
+# a sha256 sidecar, and a "latest" pointer back on the control node
+# under {{ config_snapshot_data_dir }}/<hostname>/<slug>/ - mirroring
+# the run/prune convention used by roles/linuxdb_reports, just for
+# whole files instead of check-script output.
+#
+# Never installs anything and never writes to the managed host - only
+# ansible.builtin.stat + ansible.builtin.slurp are used remotely, both
+# read-only core modules.
+
+- name: config_snapshot | refuse to run if any configured path matches the denylist
+  ansible.builtin.assert:
+    that:
+      - (config_snapshot_files
+          | map('regex_search', config_snapshot_denylist_patterns | join('|'))
+          | select
+          | list) == []
+    fail_msg: >-
+      config_snapshot_files contains one or more paths matching
+      config_snapshot_denylist_patterns (credential/secret-bearing
+      paths are never captured). Check the paths listed above and
+      remove them from config_snapshot_files, or adjust the denylist
+      if this is a genuine false positive.
+    success_msg: "config_snapshot: no configured paths matched the denylist."
+  delegate_to: localhost
+  run_once: true
+
+- name: config_snapshot | generate run timestamp
+  ansible.builtin.set_fact:
+    config_snapshot_run_ts: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+  run_once: true
+
+- name: config_snapshot | build path-to-slug pairs
+  ansible.builtin.set_fact:
+    config_snapshot_pairs: >-
+      {{ config_snapshot_files
+         | zip(config_snapshot_files
+                | map('regex_replace', '^/', '')
+                | map('regex_replace', '/', '__')
+                | list)
+         | list }}
+
+- name: config_snapshot | ensure per-host, per-file directories exist on the control node
+  ansible.builtin.file:
+    path: "{{ config_snapshot_data_dir }}/{{ inventory_hostname }}/{{ item[1] }}"
+    state: directory
+    mode: "0755"
+  loop: "{{ config_snapshot_pairs }}"
+  loop_control:
+    label: "{{ item[1] }}"
+  delegate_to: localhost
+
+- name: config_snapshot | record the source path for each slug (sidecar, overwritten every run)
+  ansible.builtin.copy:
+    content: "{{ item[0] }}\n"
+    dest: "{{ config_snapshot_data_dir }}/{{ inventory_hostname }}/{{ item[1] }}/path"
+    mode: "0644"
+  loop: "{{ config_snapshot_pairs }}"
+  loop_control:
+    label: "{{ item[1] }}"
+  delegate_to: localhost
+
+- name: config_snapshot | stat each configured path on the managed host
+  ansible.builtin.stat:
+    path: "{{ item[0] }}"
+  loop: "{{ config_snapshot_pairs }}"
+  loop_control:
+    label: "{{ item[0] }}"
+  become: true
+  register: config_snapshot_stats
+  changed_when: false
+
+- name: config_snapshot | read each existing regular file on the managed host
+  ansible.builtin.slurp:
+    src: "{{ item.item[0] }}"
+  loop: "{{ config_snapshot_stats.results }}"
+  loop_control:
+    label: "{{ item.item[0] }}"
+  become: true
+  register: config_snapshot_slurps
+  when: item.stat.exists and item.stat.isreg
+  changed_when: false
+
+- name: config_snapshot | write timestamped snapshot + sha256 sidecar for existing files
+  ansible.builtin.copy:
+    content: "{{ item.content | b64decode }}"
+    dest: >-
+      {{ config_snapshot_data_dir }}/{{ inventory_hostname }}/{{
+      (config_snapshot_pairs | selectattr('0', 'equalto', item.item.item[0]) | first)[1] }}/{{ config_snapshot_run_ts }}.txt
+    mode: "0644"
+  loop: "{{ config_snapshot_slurps.results }}"
+  loop_control:
+    label: "{{ item.item.item[0] | default('n/a') }}"
+  delegate_to: localhost
+  when: item is not skipped and item.content is defined
+
+- name: config_snapshot | write sha256 sidecar for existing files
+  ansible.builtin.copy:
+    content: "{{ (item.content | b64decode | hash('sha256')) }}\n"
+    dest: >-
+      {{ config_snapshot_data_dir }}/{{ inventory_hostname }}/{{
+      (config_snapshot_pairs | selectattr('0', 'equalto', item.item.item[0]) | first)[1] }}/{{ config_snapshot_run_ts }}.sha256
+    mode: "0644"
+  loop: "{{ config_snapshot_slurps.results }}"
+  loop_control:
+    label: "{{ item.item.item[0] | default('n/a') }}"
+  delegate_to: localhost
+  when: item is not skipped and item.content is defined
+
+- name: config_snapshot | write missing-marker for paths that don't exist or aren't a regular file
+  ansible.builtin.copy:
+    content: "missing or not a regular file at collection time\n"
+    dest: >-
+      {{ config_snapshot_data_dir }}/{{ inventory_hostname }}/{{
+      (config_snapshot_pairs | selectattr('0', 'equalto', item.item[0]) | first)[1] }}/{{ config_snapshot_run_ts }}.missing
+    mode: "0644"
+  loop: "{{ config_snapshot_stats.results }}"
+  loop_control:
+    label: "{{ item.item[0] }}"
+  delegate_to: localhost
+  when: not (item.stat.exists and item.stat.isreg)
+
+- name: config_snapshot | update the "latest" pointer for every configured path
+  ansible.builtin.copy:
+    content: "{{ config_snapshot_run_ts }}\n"
+    dest: "{{ config_snapshot_data_dir }}/{{ inventory_hostname }}/{{ item[1] }}/latest"
+    mode: "0644"
+  loop: "{{ config_snapshot_pairs }}"
+  loop_control:
+    label: "{{ item[1] }}"
+  delegate_to: localhost
+
+- name: config_snapshot | prune old runs beyond config_snapshot_keep_runs, per slug
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    cd {{ config_snapshot_data_dir }}/{{ inventory_hostname }}/{{ item[1] }} &&
+    ls -1
+    | grep -E '\.(txt|sha256|missing)$'
+    | sed -E 's/\.(txt|sha256|missing)$//'
+    | sort -u
+    | head -n -{{ config_snapshot_keep_runs }}
+    | xargs -r -I{} rm -f {}.txt {}.sha256 {}.missing
+  args:
+    executable: /bin/bash
+  loop: "{{ config_snapshot_pairs }}"
+  loop_control:
+    label: "{{ item[1] }}"
+  delegate_to: localhost
+  changed_when: false
+  failed_when: false

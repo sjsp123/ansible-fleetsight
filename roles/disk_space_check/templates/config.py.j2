@@ -1,0 +1,10 @@
+# Managed by Ansible (roles/disk_space_check) - do not edit by hand.
+# Kept as a separate settings module from disk_space_check.py itself,
+# same reasoning as roles/service_failure_watcher's config.py.j2 split.
+
+SPACE_WARN_THRESHOLD = {{ disk_space_check_space_warn_threshold }}
+SPACE_CRIT_THRESHOLD = {{ disk_space_check_space_crit_threshold }}
+INODE_WARN_THRESHOLD = {{ disk_space_check_inode_warn_threshold }}
+INODE_CRIT_THRESHOLD = {{ disk_space_check_inode_crit_threshold }}
+
+EXCLUDED_FSTYPES = {{ disk_space_check_excluded_fstypes | list }}

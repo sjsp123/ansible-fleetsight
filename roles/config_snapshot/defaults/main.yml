@@ -1,0 +1,149 @@
+---
+# Role-internal defaults. See README.md for the full variable reference.
+#
+# This role reads a configured list of config files off every host in
+# the play and saves each one back on the CONTROL NODE (the host running
+# ansible-playbook — normally admin1) as a timestamped snapshot per host
+# per file, alongside a small sha256 sidecar so the dashboard can tell
+# whether a file changed between runs without re-reading full content.
+# It never writes anything on the remote/managed hosts themselves - this
+# is read-only against every host it targets.
+#
+# Modelled on roles/linuxdb_reports (same control-node storage pattern,
+# same timestamped-run/prune convention) but for whole config files
+# instead of check-script output. Loosely inspired by the file list a
+# Red Hat support "sosreport"-style collect script gathers when a case
+# is opened, trimmed down to what's actually useful day-to-day and
+# reviewed for correct, existing paths across RHEL 7/8/9/10 AND Oracle
+# Linux 7/8/9/10 (OL is a downstream rebuild of RHEL, so the same
+# absolute paths apply version-for-version; the handful of items that
+# moved or were renamed between major versions are called out in the
+# comments below - RHEL vs OL never needs separate handling since a
+# path either exists on that host or is safely recorded as "missing")
+# - see config_snapshot_files below.
+
+config_snapshot_enabled: false
+
+# Where collected config snapshots are stored, on the control node.
+# Sibling to linuxdb_reports_data_dir - put it on the same dedicated
+# disk/mount if you have one.
+#
+# NOTE: like linuxdb_reports_data_dir, this is DUPLICATED in
+# group_vars/all/linuxdb_dashboard.yml rather than relied on as a role
+# default alone, because roles/linuxdb_dashboard's config.py.j2 reads
+# the same variable name from a separate play/host group. If you change
+# this value, change it in group_vars/all/linuxdb_dashboard.yml, not
+# just here.
+config_snapshot_data_dir: "/linuxdb/configs"
+
+# How many timestamped runs to retain per host per file before older
+# ones are pruned. Config files are typically tiny (a few KB at most),
+# so this can comfortably be larger than linuxdb_reports_keep_runs
+# without meaningfully increasing disk use.
+config_snapshot_keep_runs: 60
+
+# The list of absolute file paths to capture on every host in the play.
+# Add or remove paths freely - nothing else in this role needs to
+# change. A path that doesn't exist on a given host is recorded as
+# "missing" for that run rather than causing a failure - safe to list
+# paths that only apply to some hosts (e.g. /etc/exports only matters
+# on nfs1).
+#
+# Deliberately does NOT include credential/secret-bearing files
+# (/etc/shadow, /etc/gshadow, keytabs, private keys, vault files) -
+# see config_snapshot_denylist_patterns below, which actively refuses
+# to run if one ever ends up in this list by mistake.
+config_snapshot_files:
+  # Identity / hostname / name resolution
+  - /etc/hostname
+  - /etc/hosts
+  - /etc/resolv.conf
+  - /etc/nsswitch.conf
+
+  # Networking - NetworkManager has been the default network stack on
+  # RHEL/OL since 7.0. /etc/sysconfig/network is the older, pre-NM
+  # global settings file that's still meaningful on 7.x systems kept in
+  # legacy "network scripts" mode - lists as "missing" harmlessly on
+  # 8/9/10, where it's normally unused.
+  - /etc/NetworkManager/NetworkManager.conf
+  - /etc/sysconfig/network
+
+  # IdM / SSSD / Kerberos
+  - /etc/sssd/sssd.conf
+  - /etc/krb5.conf
+  - /etc/ipa/default.conf
+
+  # Storage / mounts / NFS
+  - /etc/fstab
+  - /etc/exports
+  - /etc/idmapd.conf
+
+  # SSH / sudo / PAM / login & password policy
+  - /etc/ssh/sshd_config
+  - /etc/sudoers
+  - /etc/pam.d/sshd
+  - /etc/pam.d/system-auth
+  - /etc/pam.d/password-auth
+  - /etc/security/limits.conf
+  - /etc/security/pwquality.conf
+  - /etc/login.defs
+
+  # Scheduling
+  - /etc/crontab
+
+  # Time sync
+  - /etc/chrony.conf
+
+  # Firewall / SELinux / audit
+  - /etc/firewalld/firewalld.conf
+  - /etc/selinux/config
+  - /etc/audit/auditd.conf
+  - /etc/audit/rules.d/audit.rules
+
+  # Logging / systemd
+  - /etc/rsyslog.conf
+  - /etc/systemd/journald.conf
+  - /etc/systemd/system.conf
+  - /etc/logrotate.conf
+
+  # Storage stack (harmless if absent on hosts without multipath/LVM)
+  - /etc/multipath.conf
+  - /etc/lvm/lvm.conf
+
+  # Package management - dnf.conf is native on RHEL/OL 8-10 (and on
+  # those releases /etc/yum.conf is normally just a compatibility
+  # symlink to it, so both resolve to the same content); yum.conf is
+  # the real, distinct file on RHEL/OL 7, which has no dnf at all.
+  # Listing both keeps this one file list correct on every supported
+  # major version without any per-host branching.
+  - /etc/dnf/dnf.conf
+  - /etc/yum.conf
+
+  # OS identification (handy context alongside the above; RHEL and OL
+  # both ship /etc/os-release and /etc/redhat-release for compatibility,
+  # and OL additionally ships /etc/oracle-release)
+  - /etc/os-release
+  - /etc/redhat-release
+  - /etc/oracle-release
+
+# Any configured path that matches one of these regexes (checked with a
+# "contains" search, not just an anchored match) makes the whole role
+# refuse to run - see tasks/main.yml. This is defence in depth: even if
+# someone later adds a sensitive path to config_snapshot_files by
+# mistake, this stops it from ever being captured rather than relying
+# on that never happening. Override only if you're certain a specific
+# pattern is a false positive for your use case.
+config_snapshot_denylist_patterns:
+  - "shadow$"
+  - "gshadow$"
+  - "krb5\\.keytab$"
+  - "\\.keytab$"
+  - "id_rsa$"
+  - "id_dsa$"
+  - "id_ecdsa$"
+  - "id_ed25519$"
+  - "ssh_host_.*_key$"
+  - "\\.pem$"
+  - "/private/"
+  - "_vault"
+  - "_secrets?\\."

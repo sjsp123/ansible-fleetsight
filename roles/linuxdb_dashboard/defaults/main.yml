@@ -1,0 +1,91 @@
+---
+# Role-internal defaults. See README.md for the full variable reference.
+#
+# Deploys the read-only linuxdb dashboard web UI (app.py) as a systemd
+# service. Reads hostinfo.csv and the linuxdb_reports data directory but
+# never writes to either — see roles/linuxdb_reports for the role that
+# actually populates the data this UI displays.
+
+linuxdb_dashboard_enabled: false
+
+# Full path to hostinfo.csv, produced by roles/hostinfo. Must match
+# playbooks/hostinfo.yml's host_report_csv_path ("/linuxdb/hostinfo")
+# joined with the fixed filename that role always writes.
+linuxdb_dashboard_hostinfo_csv_path: "/linuxdb/hostinfo/hostinfo.csv"
+
+# How many timestamped runs to offer in the history dropdown per check,
+# per host. Independent of linuxdb_reports_keep_runs (which controls how
+# many runs are retained on disk) — this only limits how many of those
+# retained runs the UI lists at once.
+linuxdb_dashboard_max_history_list: 30
+
+linuxdb_dashboard_port: 8082
+
+# Where app.py, config.py and wsgi_standalone_server.py are deployed on
+# the target host (normally admin1, the control node / log_collector).
+linuxdb_dashboard_app_dir: "/opt/linuxdb_dashboard"
+
+# Unprivileged local account the systemd service runs as. Created by
+# this role if it doesn't already exist.
+linuxdb_dashboard_user: "linuxdb_dashboard"
+
+# Whether to open the service's port in firewalld, if firewalld is
+# active on the target host.
+linuxdb_dashboard_manage_firewalld: true
+
+# --- Authentication ---------------------------------------------------
+# HTTP Basic Auth in front of the whole app, checked directly in app.py
+# using only the standard library (base64 + hmac) - see the
+# "Authentication" section of README.md. Shared by default with
+# log_search_ui via group_vars/all/dashboard_auth.yml (one
+# username/password protects both dashboards) - override
+# linuxdb_dashboard_auth_user/_password directly here instead if you
+# want this dashboard to use a different credential than log_search_ui.
+linuxdb_dashboard_auth_enabled: true
+linuxdb_dashboard_auth_user: "{{ dashboard_auth_user | default('admin') }}"
+linuxdb_dashboard_auth_password: "{{ dashboard_auth_password | default('CHANGE_ME_dashboard_admin') }}"
+
+# Kerberos/AD/IdM auth mode (optional) - see the extensive comment
+# block in group_vars/all/dashboard_auth.yml and the "Kerberos
+# authentication mode" section of README.md. Shared by default with
+# log_search_ui - override linuxdb_dashboard_auth_mode/_kerberos_*
+# directly here instead if you want this dashboard to use different
+# Kerberos settings than log_search_ui.
+linuxdb_dashboard_auth_mode: "{{ dashboard_auth_mode | default('local') }}"
+linuxdb_dashboard_auth_kerberos_realm: "{{ dashboard_auth_kerberos_realm | default('') }}"
+linuxdb_dashboard_auth_kerberos_required_group: "{{ dashboard_auth_kerberos_required_group | default('') }}"
+linuxdb_dashboard_auth_kerberos_kinit_path: "{{ dashboard_auth_kerberos_kinit_path | default('/usr/bin/kinit') }}"
+linuxdb_dashboard_auth_kerberos_kdestroy_path: "{{ dashboard_auth_kerberos_kdestroy_path | default('/usr/bin/kdestroy') }}"
+linuxdb_dashboard_auth_kerberos_getent_path: "{{ dashboard_auth_kerberos_getent_path | default('/usr/bin/getent') }}"
+linuxdb_dashboard_auth_kerberos_id_path: "{{ dashboard_auth_kerberos_id_path | default('/usr/bin/id') }}"
+
+# --- TLS ---------------------------------------------------------------
+# TLS for the standalone stdlib WSGI server itself - wrapped directly
+# around the listening socket in wsgi_standalone_server.py using the
+# standard library `ssl` module. No httpd, no mod_ssl, no reverse proxy.
+# A self-signed certificate is generated once on first deploy (if
+# linuxdb_dashboard_tls_generate_self_signed is true and no cert already
+# exists at linuxdb_dashboard_tls_cert_path) and left alone on every
+# later run - same idempotent "create if missing" pattern used
+# elsewhere in this repo (e.g. log_db's postgresql-setup --initdb).
+linuxdb_dashboard_tls_enabled: true
+linuxdb_dashboard_tls_generate_self_signed: true
+linuxdb_dashboard_tls_cn: "{{ ansible_fqdn | default(ansible_hostname) }}"
+linuxdb_dashboard_tls_cert_days: 3650
+linuxdb_dashboard_tls_cert_path: "{{ linuxdb_dashboard_app_dir }}/tls/linuxdb-dashboard.crt"
+linuxdb_dashboard_tls_key_path: "{{ linuxdb_dashboard_app_dir }}/tls/linuxdb-dashboard.key"
+
+# --- Optional cross-app switcher tabs -----------------------------------
+# Purely cosmetic: the header switcher always shows LinuxDB Dashboard and
+# Guide (both live in this app); when set, it also shows a Log Search tab
+# and an Insights tab (derived automatically from the same URL's
+# /insights path - no separate variable needed for it), so the whole
+# fleet of pages reads as one connected application instead of unrelated
+# tools. Left blank by default (renders neither extra tab) so this is
+# safe/reversible and never assumes the other dashboard is even deployed
+# on this host. Set linuxdb_dashboard_sibling_app_name/_url in group_vars
+# (or here) to enable them, e.g.:
+#   linuxdb_dashboard_sibling_app_name: "Log Search"
+#   linuxdb_dashboard_sibling_app_url: "{{ 'https' if log_search_ui_tls_enabled | default(true) else 'http' }}://{{ ansible_fqdn | default(ansible_hostname) }}:{{ log_search_ui_port | default(8081) }}/"
+linuxdb_dashboard_sibling_app_name: ""
+linuxdb_dashboard_sibling_app_url: ""

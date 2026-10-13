@@ -1,0 +1,67 @@
+# Managed by Ansible (roles/log_search_ui) - do not edit by hand.
+#
+# Kept separate from app.py deliberately: app.py is deployed verbatim via
+# ansible.builtin.copy (not templated) because it contains its own
+# literal '{' and '}' characters in its embedded CSS block (PAGE_CSS) -
+# templating app.py with Ansible/Jinja2 would misinterpret those braces
+# as Jinja syntax and corrupt the file. Only this small, brace-free
+# settings file is templated.
+
+DB_HOST = "{{ log_search_ui_db_host }}"
+DB_NAME = "{{ log_search_ui_db_name }}"
+DB_TABLE = "{{ log_search_ui_db_table }}"
+SUPPRESSED_PATTERNS_TABLE = "{{ log_search_ui_suppressed_patterns_table }}"
+DB_USER = "{{ log_search_ui_db_user }}"
+DB_PASSWORD = "{{ log_search_ui_db_password }}"
+MAX_RESULTS = {{ log_search_ui_max_results }}
+MAX_RESULTS_ALL = {{ log_search_ui_max_results_all }}
+
+# Insights page (/insights) - see the "Insights" section of README.md.
+INSIGHTS_DEFAULT_WINDOW = "{{ log_search_ui_insights_default_window }}"
+INSIGHTS_SCAN_ROWS = {{ log_search_ui_insights_scan_rows }}
+INSIGHTS_TOP_ALERTS = {{ log_search_ui_insights_top_alerts }}
+INSIGHTS_TOP_IPS = {{ log_search_ui_insights_top_ips }}
+INSIGHTS_BRUTEFORCE_ATTEMPTS_THRESHOLD = {{ log_search_ui_insights_bruteforce_attempts_threshold }}
+INSIGHTS_BRUTEFORCE_USERS_THRESHOLD = {{ log_search_ui_insights_bruteforce_users_threshold }}
+INSIGHTS_REPEAT_IP_THRESHOLD = {{ log_search_ui_insights_repeat_ip_threshold }}
+INSIGHTS_HIGH_SEVERITY_REPEAT_THRESHOLD = {{ log_search_ui_insights_high_severity_repeat_threshold }}
+INSIGHTS_LOW_COUNT_THRESHOLD = {{ log_search_ui_insights_low_count_threshold }}
+INSIGHTS_TOP_SUDO_USERS = {{ log_search_ui_insights_top_sudo_users }}
+INSIGHTS_SUDO_REPEAT_THRESHOLD = {{ log_search_ui_insights_sudo_repeat_threshold }}
+INSIGHTS_SUDO_SENSITIVE_COMMANDS_PATTERN = "{{ log_search_ui_insights_sudo_sensitive_commands_pattern }}"
+INSIGHTS_TOP_SU_USERS = {{ log_search_ui_insights_top_su_users }}
+INSIGHTS_SU_REPEAT_THRESHOLD = {{ log_search_ui_insights_su_repeat_threshold }}
+
+# HTTP Basic Auth (see README "Authentication") - checked directly in
+# app.py using hmac.compare_digest() from the standard library, no
+# session/cookie state. | bool guards against CLI -e extra-vars arriving
+# as a raw string rather than a native boolean.
+AUTH_ENABLED = {{ log_search_ui_auth_enabled | bool }}
+AUTH_USER = "{{ log_search_ui_auth_user }}"
+AUTH_PASSWORD = "{{ log_search_ui_auth_password }}"
+
+# Kerberos authentication mode (optional) - see README "Kerberos
+# authentication mode" and group_vars/all/dashboard_auth.yml. When
+# AUTH_MODE is "local" (the default) none of these are consulted at all
+# - the AUTH_USER/AUTH_PASSWORD check above still applies unchanged.
+AUTH_MODE = "{{ log_search_ui_auth_mode }}"
+KERBEROS_REALM = "{{ log_search_ui_auth_kerberos_realm }}"
+KERBEROS_REQUIRED_GROUP = "{{ log_search_ui_auth_kerberos_required_group }}"
+KERBEROS_KINIT_PATH = "{{ log_search_ui_auth_kerberos_kinit_path }}"
+KERBEROS_KDESTROY_PATH = "{{ log_search_ui_auth_kerberos_kdestroy_path }}"
+KERBEROS_GETENT_PATH = "{{ log_search_ui_auth_kerberos_getent_path }}"
+KERBEROS_ID_PATH = "{{ log_search_ui_auth_kerberos_id_path }}"
+
+# TLS for the standalone stdlib WSGI server (see README "TLS") - read by
+# wsgi_standalone_server.py, not by app.py itself.
+TLS_ENABLED = {{ log_search_ui_tls_enabled | bool }}
+TLS_CERT_PATH = "{{ log_search_ui_tls_cert_path }}"
+TLS_KEY_PATH = "{{ log_search_ui_tls_key_path }}"
+
+# Optional cross-app switcher tabs (see README "Cross-app navigation
+# switcher" / defaults/main.yml) - blank by default, which app.py's
+# render_nav() treats as "don't show this tab".
+SIBLING_APP_NAME = "{{ log_search_ui_sibling_app_name }}"
+SIBLING_APP_URL = "{{ log_search_ui_sibling_app_url }}"
+PACKAGES_APP_URL = "{{ log_search_ui_packages_app_url }}"
+GUIDE_APP_URL = "{{ log_search_ui_guide_app_url }}"

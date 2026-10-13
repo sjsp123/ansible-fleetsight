@@ -1,0 +1,176 @@
+---
+# =============================================================================
+# silence_setroubleshoot
+# Red Hat KB 2762771: https://access.redhat.com/solutions/2762771
+# Red Hat "Using SELinux" (RHEL 10), Ch. Changing SELinux states and modes:
+#   https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/using_selinux/
+# =============================================================================
+
+- name: Preflight — confirm target is RHEL 7/8/9/10
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family == "RedHat"
+      - ansible_distribution_major_version | int in [7, 8, 9, 10]
+    fail_msg: >-
+      This role is scoped to RHEL 7-10 only. Detected:
+      {{ ansible_distribution }} {{ ansible_distribution_version }}.
+
+- name: Preflight — refuse to run against production groups
+  ansible.builtin.assert:
+    that:
+      - "'production' not in group_names"
+      - "'prod' not in group_names"
+    fail_msg: >-
+      silence_setroubleshoot refuses to run against production group members.
+      Move this host into the homelab or work group and re-run.
+
+- name: Preflight — ensure libselinux Python bindings are present
+  ansible.builtin.package:
+    name: >-
+      {{ 'libselinux-python'
+         if ansible_distribution_major_version | int == 7
+         else 'python3-libselinux' }}
+    state: present
+  when: silence_setroubleshoot_set_permissive | bool
+
+# -----------------------------------------------------------------------------
+# Part 1: Disable sedispatch (KB 2762771)
+# Silences the setroubleshootd/sealert notification pipeline. AVCs still
+# land in /var/log/audit/audit.log; they just stop generating sealerts.
+# -----------------------------------------------------------------------------
+
+- name: Compute sedispatch config path for this RHEL major version
+  ansible.builtin.set_fact:
+    silence_setroubleshoot_sedispatch_conf: >-
+      {{ '/etc/audit/plugins.d/sedispatch.conf'
+         if ansible_distribution_major_version | int >= 8
+         else '/etc/audisp/plugins.d/sedispatch.conf' }}
+
+- name: Check sedispatch config presence
+  ansible.builtin.stat:
+    path: "{{ silence_setroubleshoot_sedispatch_conf }}"
+  register: silence_setroubleshoot_sd_stat
+
+- name: Warn if sedispatch config missing
+  ansible.builtin.debug:
+    msg: >-
+      {{ silence_setroubleshoot_sedispatch_conf }} not found on
+      {{ inventory_hostname }}
+      ({{ ansible_distribution }} {{ ansible_distribution_version }}).
+      setroubleshoot-server may not be installed. Skipping Part 1.
+  when: not silence_setroubleshoot_sd_stat.stat.exists
+
+- name: Disable sedispatch audit plugin
+  ansible.builtin.lineinfile:
+    path: "{{ silence_setroubleshoot_sedispatch_conf }}"
+    regexp: '^\s*active\s*='
+    line: 'active = no'
+    backup: true
+  when:
+    - silence_setroubleshoot_disable_sedispatch | bool
+    - silence_setroubleshoot_sd_stat.stat.exists
+  notify: Restart auditd
+
+- name: Force handler flush so verification sees a restarted auditd
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify sedispatch is inactive
+  ansible.builtin.command: "grep ^active {{ silence_setroubleshoot_sedispatch_conf }}"
+  register: silence_setroubleshoot_sd_check
+  changed_when: false
+  failed_when: >-
+    silence_setroubleshoot_disable_sedispatch | bool
+    and silence_setroubleshoot_sd_stat.stat.exists
+    and 'active = no' not in silence_setroubleshoot_sd_check.stdout
+  when: silence_setroubleshoot_sd_stat.stat.exists
+
+# -----------------------------------------------------------------------------
+# Part 2: Set SELinux to Permissive (runtime + persistent, no reboot)
+# Red Hat: enforcing ↔ permissive is a live transition via setenforce(1);
+# only the enforcing/permissive → disabled transition requires a reboot.
+# AVCs continue to be logged (which is the point of permissive vs. disabled).
+# -----------------------------------------------------------------------------
+
+- name: Capture current SELinux state
+  ansible.builtin.command: getenforce
+  register: silence_setroubleshoot_pre_getenforce
+  changed_when: false
+  check_mode: false
+
+- name: Show current SELinux state
+  ansible.builtin.debug:
+    msg: "SELinux currently reports: {{ silence_setroubleshoot_pre_getenforce.stdout }}"
+
+- name: Refuse to run against a currently-disabled host
+  ansible.builtin.assert:
+    that:
+      - silence_setroubleshoot_pre_getenforce.stdout != 'Disabled'
+    fail_msg: >-
+      SELinux is currently Disabled on {{ inventory_hostname }}. Switching
+      from Disabled to Permissive requires a reboot (kernel needs SELinux
+      re-initialised), which is out of scope for this role. Re-enable
+      SELinux manually, reboot, then re-run this role.
+  when: silence_setroubleshoot_set_permissive | bool
+
+- name: Set SELINUX=permissive in /etc/selinux/config (persistent across reboots)
+  ansible.builtin.lineinfile:
+    path: /etc/selinux/config
+    regexp: '^\s*SELINUX\s*='
+    line: 'SELINUX=permissive'
+    backup: true
+  when: silence_setroubleshoot_set_permissive | bool
+  register: silence_setroubleshoot_config_change
+
+- name: Set SELinux to permissive at runtime (no reboot)
+  ansible.posix.selinux:
+    policy: targeted
+    state: permissive
+  when: silence_setroubleshoot_set_permissive | bool
+  register: silence_setroubleshoot_runtime_change
+
+- name: Verify runtime SELinux state is now Permissive
+  ansible.builtin.command: getenforce
+  register: silence_setroubleshoot_post_getenforce
+  changed_when: false
+  check_mode: false
+  when: silence_setroubleshoot_set_permissive | bool
+
+- name: Assert SELinux runtime state is Permissive
+  ansible.builtin.assert:
+    that:
+      - silence_setroubleshoot_post_getenforce.stdout == 'Permissive'
+    fail_msg: >-
+      Post-change getenforce returned
+      '{{ silence_setroubleshoot_post_getenforce.stdout }}', expected
+      'Permissive'. Investigate /etc/selinux/config and any pending
+      kernel cmdline overrides (enforcing=1 / selinux=0).
+  when: silence_setroubleshoot_set_permissive | bool
+
+- name: Warn if kernel command line overrides /etc/selinux/config
+  ansible.builtin.shell: |
+    set -o pipefail
+    grubby --info=DEFAULT | grep -E '^args=' \
+      | grep -E 'enforcing=1|selinux=0' || true
+  args:
+    executable: /bin/bash
+  register: silence_setroubleshoot_cmdline_check
+  changed_when: false
+  when: silence_setroubleshoot_set_permissive | bool
+
+- name: Alert on stale enforcing=1 or selinux=0 on kernel command line
+  ansible.builtin.debug:
+    msg: |
+      *** WARNING ***
+      Kernel command line on {{ inventory_hostname }} still contains
+      enforcing=1 or selinux=0, which will override /etc/selinux/config
+      on the NEXT reboot:
+
+        {{ silence_setroubleshoot_cmdline_check.stdout }}
+
+      Runtime is Permissive now, but permissive will NOT survive reboot
+      until you strip those args:
+
+        grubby --update-kernel ALL --remove-args "enforcing=1 selinux=0"
+  when:
+    - silence_setroubleshoot_set_permissive | bool
+    - silence_setroubleshoot_cmdline_check.stdout | length > 0

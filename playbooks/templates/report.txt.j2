@@ -1,0 +1,50 @@
+System Health Check and Configuration Report
+-------------------------------------------
+Generated   : {{ ansible_facts.date_time.iso8601 }}
+Hostname    : {{ ansible_facts.hostname }} ({{ ansible_facts.fqdn }})
+Uptime      : {{ uptime_output.stdout }}
+Load Avg    : {{ loadavg_output.stdout.split()[0] }} (1m) / {{ loadavg_output.stdout.split()[1] }} (5m) / {{ loadavg_output.stdout.split()[2] }} (15m)
+OS Version  : {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }} ({{ ansible_facts.distribution_release }})
+Kernel      : {{ ansible_facts.kernel }}
+
+CPU Info
+--------
+Architecture              : {{ ansible_facts.architecture }}
+Model                     : {{ ansible_facts.processor[-1] if (ansible_facts.processor is defined and ansible_facts.processor | length > 0) else 'N/A' }}
+Sockets                   : {{ ansible_facts.processor_count }}
+Cores per Socket          : {{ ansible_facts.processor_cores }}
+Total Physical Cores      : {{ ansible_facts.processor_cores * ansible_facts.processor_count }}
+Total Logical CPUs (vCPUs): {{ ansible_facts.processor_vcpus }}
+
+Memory Info
+-----------
+Total Memory (MB)   : {{ ansible_facts.memtotal_mb }}
+Free Memory (MB)    : {{ ansible_facts.memfree_mb }}
+Used Memory (MB)    : {{ ansible_facts.memtotal_mb - ansible_facts.memfree_mb }}
+Memory Usage (%)    : {{ (((ansible_facts.memtotal_mb - ansible_facts.memfree_mb) / ansible_facts.memtotal_mb) * 100) | round(1) }}
+Swap Total (MB)     : {{ ansible_facts.swaptotal_mb }}
+Swap Free (MB)      : {{ ansible_facts.swapfree_mb }}
+
+Disk Info
+---------
+{% for mount in ansible_facts.mounts %}
+Device            : {{ mount.device }}
+  Mount Point     : {{ mount.mount }}
+  File System Type: {{ mount.fstype }}
+  Total Space (GB): {{ (mount.size_total / 1024 / 1024 / 1024) | round(2) }}
+  Available (GB)  : {{ (mount.size_available / 1024 / 1024 / 1024) | round(2) }}
+  Used (GB)       : {{ ((mount.size_total - mount.size_available) / 1024 / 1024 / 1024) | round(2) }}
+  Usage (%)       : {{ (((mount.size_total - mount.size_available) / mount.size_total) * 100) | round(1) if mount.size_total > 0 else 0 }}
+{% endfor %}
+Network Info (cumulative counters, excludes loopback)
+-------------------------------------------------------
+Bytes Sent       : {{ net_info.bytes_sent }}
+Bytes Received   : {{ net_info.bytes_received }}
+Packets Sent     : {{ net_info.packets_sent }}
+Packets Received : {{ net_info.packets_received }}
+
+Critical Services Status
+-------------------------
+{% for svc, status in service_status.items() %}
+{{ "%-15s" | format(svc) }}: {{ status }}
+{% endfor %}

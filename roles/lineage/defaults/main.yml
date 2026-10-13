@@ -1,0 +1,25 @@
+---
+# roles/lineage/defaults/main.yml
+#
+# All of these are normally set via -e on the ansible-playbook command line
+# (see playbooks/lineage.yml and this role's README.md for copy-paste
+# examples), not edited here.
+
+# Where the diagnostic script is installed on the target. Left in place
+# after the run (root:root 0755) so it can also be run directly over SSH
+# without Ansible for a quick follow-up check.
+lineage_install_path: /usr/local/sbin/why-running
+
+# --- Target selection (at least one of these must be non-empty) ---------
+lineage_target: "{{ target | default('') }}"        # name/service, substring-matched
+lineage_pid: "{{ target_pid | default('') }}"
+lineage_port: "{{ target_port | default('') }}"
+lineage_file: "{{ target_file | default('') }}"
+lineage_container: "{{ target_container | default('') }}"
+
+# --- Modifiers ------------------------------------------------------------
+lineage_exact: "{{ exact | default(false) | bool }}"
+
+# One of: standard | short | tree | json | env | warnings
+lineage_mode: "{{ mode | default('standard') }}"
+lineage_verbose: "{{ verbose | default(false) | bool }}"

@@ -1,0 +1,103 @@
+---
+# roles/system_poweroff/defaults/main.yml
+#
+# See roles/system_poweroff/README.md for the full picture. This role
+# gracefully shuts down RHEL/Oracle Linux 7-10 hosts - physical HPE
+# ProLiant (DL380 Gen10/Gen11) or virtual - and then confirms the
+# power state is actually Off: out-of-band via iLO/IPMI for hosts in
+# the [hpe_ilo_hosts] inventory group (see inventory.example.ini and
+# playbooks/collect_ilo.yml, which already uses that group), or a
+# network-reachability check for everything else.
+
+# --- Safety gate (REQUIRED) --------------------------------------------
+# This role refuses to do anything destructive unless this is
+# explicitly overridden to true - always via -e on the command line,
+# never in a committed group_vars file. A plain
+# `ansible-playbook playbooks/system_poweroff.yml -e target_hosts=...`
+# always fails safe with a clear message instead of silently powering
+# something off.
+system_poweroff_confirm: false
+
+# --- Target safety checks ----------------------------------------------
+# Refuses to run against any distribution/major version not listed
+# here. Override system_poweroff_skip_os_check (never the lists
+# themselves) if you deliberately need to target something else.
+system_poweroff_allowed_distributions:
+  - RedHat
+  - OracleLinux
+system_poweroff_allowed_major_versions: [7, 8, 9, 10]
+system_poweroff_skip_os_check: false
+
+# Refuses to shut down a host that IS the Ansible control node itself
+# (ansible_connection == "local" - the same convention
+# inventory.example.ini already documents for a "collector is the
+# control node" setup). Doing that mid-play would cut the play off
+# from under itself before it can even reach the verification step.
+# Only override this if you genuinely mean to power off the control
+# node, as the very last host in a batch, and understand that nothing
+# after it in that run will get a summary printed.
+system_poweroff_allow_control_node: false
+
+# --- Shutdown behaviour --------------------------------------------------
+system_poweroff_message: "Shutdown initiated by Ansible (system_poweroff role)"
+
+# Set true to run every safety check and the verification step WITHOUT
+# issuing the actual shutdown - useful to test a host's BMC
+# reachability/credentials, or to re-verify a host you already shut
+# down some other way, without re-triggering `shutdown -h now`.
+system_poweroff_skip_shutdown: false
+
+# --- Verification --------------------------------------------------------
+system_poweroff_verify_enabled: true
+
+# Where the BMC/network checks run FROM - never the target host
+# itself, since by the time we verify, its OS (and any in-band access)
+# may already be gone. Defaults to the control node; point this at a
+# dedicated jump/management host instead if the control node has no
+# network route to your iLO management VLAN.
+system_poweroff_verify_delegate_host: localhost
+system_poweroff_verify_timeout_seconds: 300
+system_poweroff_verify_poll_interval_seconds: 15
+
+# --- Physical hosts (inventory group [hpe_ilo_hosts]) --------------------
+# "ipmitool" (IPMI-over-LAN, RMCP+/lanplus) or "ilorest" (HPE iLO
+# RESTful/Redfish API) - see the README's "Choosing ipmitool vs.
+# ilorest" comparison. ipmitool's one-line "Chassis Power is off/on"
+# output is simpler to parse reliably and supports passing the BMC
+# password via an environment variable instead of a command-line
+# argument; ilorest/Redfish is HPE's longer-term recommended interface
+# and the only option once IPMI-over-LAN has been disabled (an
+# increasingly common security-hardening default, especially on
+# Gen11).
+system_poweroff_bmc_tool: ipmitool
+
+# BMC (iLO) admin credentials - a DIFFERENT account from the host's
+# own OS/root credentials. The CHANGE_ME placeholders below are safe
+# to commit; put the real values in an ansible-vault encrypted
+# group_vars/all/system_poweroff_secrets.yml, exactly like every other
+# credential in this repo (see group_vars/all/log_db.yml):
+#
+#   ansible-vault create group_vars/all/system_poweroff_secrets.yml
+#
+#     system_poweroff_bmc_user: "a real iLO account"
+#     system_poweroff_bmc_password: "a real iLO password"
+#
+# ...then run playbooks with --ask-vault-pass (or rely on
+# ansible.cfg's vault_password_file, already configured in this repo).
+system_poweroff_bmc_user: CHANGE_ME_ilo_admin
+system_poweroff_bmc_password: CHANGE_ME_ilo_password
+
+# Leave blank (the default) to auto-detect each host's own iLO/BMC IP
+# in-band - via `ipmitool lan print`, run locally on the target while
+# its OS is still up, the same technique playbooks/collect_ilo.yml
+# already uses - immediately before shutdown. Set a
+# system_poweroff_bmc_address HOSTVAR on a specific host to skip live
+# detection for it (e.g. if the in-band ipmitool driver isn't loaded
+# there, or you already maintain this mapping elsewhere).
+system_poweroff_bmc_address: ""
+
+# --- Virtual / non-BMC hosts ---------------------------------------------
+# Best-effort only - see README "What this does not cover". Confirms
+# the host has stopped answering on this TCP port; it does NOT confirm
+# the hypervisor has actually powered off the VM.
+system_poweroff_network_check_port: 22

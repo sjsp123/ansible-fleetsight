@@ -1,0 +1,70 @@
+---
+# roles/idm_healthcheck_watch/defaults/main.yml
+#
+# Local, per-host IdM health checking - runs `ipa-healthcheck` directly
+# (not via roles/idm_healthchecks, which is an ad hoc/post-patch
+# Ansible run) on a short systemd timer and logs one syslog message
+# per non-SUCCESS finding. Deployed only to the [idm] group (see
+# inventory.example.ini) via playbooks/centralized_logging.yml. Logs
+# to syslog only - it never emails anything itself.
+# roles/idm_healthcheck_watcher ([log_collector] only) polls log_db
+# for these messages and sends the actual alert email - see that
+# role's README.md.
+#
+# Deliberately separate from roles/idm_healthchecks: that role is a
+# one-shot, ad hoc/post-patch Ansible task (optionally failing the
+# play, optionally copying evidence to a share, and feeding
+# roles/linuxdb_dashboard) - this role is a background systemd timer
+# that runs unattended and feeds the same check+watcher email-alerting
+# family as roles/disk_space_check/roles/chrony_check. Both roles can
+# run ipa-healthcheck on the same host with no conflict - they are
+# fully independent of one another.
+
+# Opt-in, matching the pattern used by roles/disk_space_check,
+# roles/chrony_check, etc: this role's own default is false;
+# group_vars/all/idm_healthcheck_watch.yml flips it on fleet-wide by
+# default in this repo.
+idm_healthcheck_watch_enabled: false
+
+# Check cadence. IdM replication/service problems are usually slower-
+# moving than a service crash, but faster-moving than disk fill-up, so
+# 30 minutes (user-confirmed) - shorter than disk_space_check's 300s.. no,
+# LONGER than disk_space_check's 5 minutes: ipa-healthcheck itself is a
+# heavier operation (it exercises LDAP/replication/certmonger/DNS
+# checks, not a cheap statvfs() call) and doesn't need to run every few
+# minutes to still catch problems promptly.
+idm_healthcheck_watch_poll_interval_seconds: 1800
+
+# Whether to ensure the ipa-healthcheck package is installed. Same
+# reasoning/pattern as roles/idm_healthchecks' idm_hc_install_package -
+# harmless no-op if roles/idm_healthchecks (or a manual install)
+# already put it there.
+idm_healthcheck_watch_install_package: true
+
+# Healthcheck scope - same three modes as roles/idm_healthchecks'
+# idm_hc_mode, for the same reasons (run everything, or narrow to
+# services/replication+topology only).
+idm_healthcheck_watch_mode: "all"
+
+# Additional --source values, same as roles/idm_healthchecks'
+# idm_hc_extra_sources.
+idm_healthcheck_watch_extra_sources: []
+
+# How long a single `ipa-healthcheck` run is allowed before this
+# script gives up and logs a RUN_FAILED syslog message instead (see
+# files/idm_healthcheck_watch.py) - ipa-healthcheck can legitimately
+# take upwards of a minute on a busy or heavily-replicated server, so
+# this is well above chrony_check's 10s per-command timeout.
+idm_healthcheck_watch_timeout_seconds: 180
+
+idm_healthcheck_watch_app_dir: /opt/idm_healthcheck_watch
+
+# NOTE - deliberate deviation from roles/disk_space_check and
+# roles/chrony_check: those roles create and run as an UNPRIVILEGED
+# system account, because statvfs()/timedatectl/chronyc all work fine
+# without elevated rights. `ipa-healthcheck` is different - Red Hat/
+# FreeIPA document it as requiring root (it inspects 389-ds internals,
+# certmonger state, and other root-only resources), so this role's
+# systemd service runs as root and there is no
+# idm_healthcheck_watch_user variable to override. See README.md
+# "Why this runs as root" for the full reasoning.

@@ -1,0 +1,221 @@
+---
+###############################################################################
+# The check registry.
+#
+# To add a column to the hostinfo CSV report, add ONE entry below.
+# Nothing in roles/hostinfo/tasks/main.yml or the .j2 template needs to
+# change for a simple command/service check.
+#
+#   key              : unique id, used as the dict key / column lookup
+#   header           : the CSV column heading
+#   cmd              : any shell one-liner; trimmed stdout becomes the value
+#   only_if_in_list  : (optional) name of a *list variable* defined in this
+#                       same file — the check only runs on hosts whose
+#                       inventory_hostname (lower-cased) appears in that
+#                       list. Omit to run on every host.
+#   expect           : (optional) expected value — mismatches populate the
+#                       ALERTS column, see roles/hostinfo/tasks/main.yml
+#   max              : (optional) numeric ceiling — values above this
+#                       populate the ALERTS column
+###############################################################################
+
+# --------------------------------------------------------------------------
+# Site-specific host lists.
+#
+# These five lists are deliberately EMPTY here - this file is committed to
+# git. Each list gates one column (see only_if_in_list below) so that
+# column simply shows blank on every host until you tell it otherwise.
+#
+# To wire in your own real hostnames (e.g. your license-manager boxes, your
+# HPE ProLiant fleet, an internal docs server), copy
+# group_vars/all/site_hosts.yml.example to group_vars/all/site_hosts.yml
+# (already in .gitignore - it will never be committed) and fill it in there.
+# Because Ansible loads group_vars/all/*.yml alphabetically and a later file
+# simply overwrites a same-named variable, site_hosts.yml (loaded after this
+# file) takes effect automatically with no edits needed here.
+#rsm222_hosts: []
+#rsm232_hosts: []
+#flexlm_hosts: []
+#abaqus_docs_hosts: []
+#prolient_hosts: []
+
+# Single hostname the abaqdocs check below curls (three ports) to confirm the
+# documentation server is answering. Empty by default (curls localhost,
+# which harmlessly reports "failed"); override in site_hosts.yml.
+#abaqus_docs_host: ""
+
+# Column order below is the CSV/dashboard display order, right after the
+# fixed HOSTNAME/FQDN/IP/OS columns (see roles/hostinfo/templates/
+# hostinfo.csv.j2) - reordered and re-labelled to match a specific
+# requested layout. Note there's deliberately no separate ARCH column:
+# the KERNEL value already includes the architecture suffix (e.g.
+# "...el10_2.aarch64"), so a standalone ARCH column would just repeat it.
+host_checks:
+
+  - key: patch_status
+    header: "DNF STATUS"
+    cmd: >
+      dnf check-update >/dev/null 2>&1 &&
+      echo UP_TO_DATE ||
+      echo UPDATE_REQUIRED
+
+  - key: reboot_required
+    header: "REBOOT REQD"
+    cmd: >
+      needs-restarting -r >/dev/null 2>&1
+      && echo No || echo Yes
+
+  - key: satellite
+    header: "IN SATELLITE"
+    cmd: >
+      subscription-manager identity >/dev/null 2>&1
+      && echo Yes || echo No
+
+  - key: last_reboot
+    header: LAST_BOOT
+    cmd: "who -b | awk '{print $3, $4}'"
+
+  - key: uptime
+    header: UPTIME
+    cmd: >-
+      awk '{d=int($1/86400); h=int(($1%86400)/3600); m=int(($1%3600)/60);
+      printf "%d days %02d:%02d", d, h, m}' /proc/uptime
+
+  - key: failed_service_count
+    header: FAILED_SVC_CNT
+    cmd: >
+      systemctl --failed --no-legend
+      | wc -l
+
+  - key: failed_services
+    header: FAILED_SVCS
+    cmd: "systemctl list-units --failed --plain --no-legend --no-pager | awk '{print $1}' | paste -sd ';' -"
+
+  - key: time_sync
+    header: NTP_SYNC
+    cmd: "timedatectl show -p NTPSynchronized --value"
+
+  - key: chrony_leap
+    header: "CHRONY LEAP"
+    cmd: "chronyc tracking 2>/dev/null | awk -F': ' '/Leap status/ {print $2}'"
+
+  - key: chronyd_status
+    header: CHRONYD
+    cmd: "systemctl is-active chronyd.service"
+
+  - key: sshd_status
+    header: SSHD
+    cmd: "systemctl is-active sshd.service"
+
+  - key: firewalld_status
+    header: FIREWALLD
+    # Not every host in this fleet runs firewalld - some don't have it
+    # installed at all, others have it installed but deliberately
+    # disabled (relying on a perimeter/hypervisor firewall instead).
+    # Plain "systemctl is-active firewalld.service" prints "inactive"
+    # for ALL of those cases, indistinguishable from a host where
+    # firewalld is supposed to be running but has actually stopped -
+    # which made the dashboard's SERVICE_STATUS_COLUMNS check (roles/
+    # linuxdb_dashboard/files/app.py) flag every such host as a WARNING,
+    # a false positive either way.
+    #
+    # Gate on two questions first, in order: is it installed at all
+    # ("rpm -q", query only, never installs anything), then is it
+    # actually enabled to start at boot ("systemctl is-enabled") - i.e.
+    # is this host even supposed to be running firewalld. If either
+    # answer is no, print nothing at all, same as the blank value
+    # RSM222/RSM232/FLEXLM already print on hosts outside their own
+    # site_hosts.yml list - the dashboard already treats a blank value
+    # as "not applicable" and skips it rather than flagging it (see
+    # app.py's overview_row_status()), so no app.py change is needed.
+    # Only on a host where firewalld IS installed and enabled do we
+    # actually report (and let the dashboard flag) its live active
+    # state - that's the one case where "inactive" is a real problem.
+    cmd: >
+      rpm -q --quiet firewalld
+      && systemctl is-enabled --quiet firewalld.service
+      && systemctl is-active firewalld.service
+      || true
+
+  - key: auditd_status
+    header: AUDITD
+    cmd: "systemctl is-active auditd.service"
+
+  - key: crond_status
+    header: CROND
+    cmd: "systemctl is-active crond.service"
+
+  - key: chrony_servers
+    header: "CHRONY SVRS"
+    cmd: "awk '/^(server|pool)[[:space:]]+/ {print $2}' /etc/chrony.conf | paste -sd ';' -"
+
+  - key: selinux
+    header: SELINUX
+    cmd: "getenforce"
+
+  - key: kernel
+    header: KERNEL
+    cmd: "uname -r"
+
+  - key: cpu_count
+    header: CPUS
+    cmd: "nproc"
+
+  - key: memory_gb
+    header: MEM_GB
+    cmd: "free -g | awk '/Mem:/ {print $2}'"
+
+  - key: swap_gb
+    header: SWAP_GB
+    cmd: "free -g | awk '/Swap:/ {print $2}'"
+
+  - key: manufacturer
+    header: MFR
+    cmd: "dmidecode -s system-manufacturer 2>/dev/null | sed 's/VMware, Inc./VMware/'"
+
+  - key: model
+    header: MODEL
+    cmd: >
+      dmidecode -s system-product-name 2>/dev/null |
+      sed -E 's/^(VMware[^,]*),.*/\1/'
+
+#  - key: serial
+#    header: SERIAL
+#    cmd: "dmidecode -s system-serial-number 2>/dev/null"
+#    only_if_in_list: prolient_hosts
+
+  - key: realm
+    header: REALM
+    cmd: "realm list 2>/dev/null | head -n1"
+
+#  - key: rsm222
+#    header: RSM222
+#    cmd: "systemctl is-active rsm222.service"
+#    only_if_in_list: rsm222_hosts
+
+#  - key: rsm232
+#    header: RSM232
+#    cmd: "systemctl is-active rsm232.service"
+#    only_if_in_list: rsm232_hosts
+
+#  - key: flexlm
+#    header: FLEXLM
+#    cmd: "pgrep -f 'lmgrd' >/dev/null && echo running || echo failed"
+#    only_if_in_list: flexlm_hosts
+
+#  - key: abaqdocs
+#    header: ABQ_DOCS
+#    cmd: 'printf "2023=%s 2024=%s 2025=%s DEFAULT=%s\n" "$(curl -ksf "http://{{ abaqus_docs_host | default("localhost", true) }}:4040/English/?show=SIMULIA_Established_FrontmatterMap/DSDocHome.htm" >/dev/null && echo running || echo failed)" "$(curl -ksf "http://{{ abaqus_docs_host | default("localhost", true) }}:4042/English/?show=SIMULIA_Established_FrontmatterMap/DSDocHome.htm" >/dev/null && echo running || echo failed)" "$(curl -ksf "http://{{ abaqus_docs_host | default("localhost", true) }}:4043/English/?show=SIMULIA_Established_FrontmatterMap/DSDocHome.htm" >/dev/null && echo running || echo failed)" "$(curl -ksf "http://{{ abaqus_docs_host | default("localhost", true) }}:4044/English/?show=SIMULIA_Established_FrontmatterMap/DSDocHome.html" >/dev/null && echo running || echo failed)"'
+#    only_if_in_list: abaqus_docs_hosts
+
+  # Example additions — copy this pattern for new checks, then delete these
+  # two if you don't need them.
+  # -------------------------------------------------------------------------
+  # - key: postgresql_status
+  #   header: POSTGRESQL_STATUS
+  #   cmd: "systemctl is-active postgresql.service"
+  #
+  # - key: root_disk_pct
+  #   header: ROOT_DISK_PCT
+  #   cmd: "df -h / | awk 'NR==2 {print $5}' | tr -d '%'"
+  #   max: 90

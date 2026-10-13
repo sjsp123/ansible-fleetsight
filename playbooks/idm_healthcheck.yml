@@ -1,0 +1,39 @@
+---
+# playbooks/idm_healthcheck.yml
+#
+# Runs the roles/idm_healthchecks role (ipa-healthcheck) against the IdM
+# server(s). Intended for ad-hoc checks and for running after patching or
+# reboots to confirm IdM services, replication, and topology are healthy.
+# See roles/idm_healthchecks/README.md for the full variable reference.
+#
+# Usage:
+#   ansible-playbook playbooks/idm_healthcheck.yml
+#   ansible-playbook playbooks/idm_healthcheck.yml -e target_host=idm1.lab.example.com
+#   ansible-playbook playbooks/idm_healthcheck.yml -e target_host=idm
+#   ansible-playbook playbooks/idm_healthcheck.yml -e idm_hc_mode=replication_topology
+#   ansible-playbook playbooks/idm_healthcheck.yml -e idm_hc_fail_on_error=false
+#
+- name: IdM healthcheck
+  hosts: "{{ target_host }}"
+  gather_facts: true
+  become: true
+  tags:
+    - idm
+    - healthcheck
+
+  vars_prompt:
+    - name: target_host
+      prompt: "Enter target host or inventory group (e.g. idm1.lab.example.com or idm)"
+      private: no
+      default: "all"
+      # Same convention as playbooks/hostinfo.yml and lineage.yml:
+      # this default is only a convenience for an interactive terminal -
+      # "all" will run ipa-healthcheck against every inventory host, not
+      # just IdM servers, so type your actual IdM host/group name at the
+      # prompt instead of accepting the default. For cron/AAP, ALWAYS
+      # pass -e target_host=<idm host or group> explicitly - vars_prompt
+      # is skipped whenever the var already arrived via --extra-vars, so
+      # a non-interactive run never blocks on stdin.
+
+  roles:
+    - role: idm_healthchecks

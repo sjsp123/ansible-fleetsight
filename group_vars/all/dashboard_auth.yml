@@ -1,0 +1,83 @@
+---
+# group_vars/all/dashboard_auth.yml
+#
+# Shared HTTP Basic-Auth credential for the two stdlib-Python web front
+# ends in this repo: roles/log_search_ui and roles/linuxdb_dashboard.
+# Both roles' auth is checked directly in their own app.py (see the
+# "Authentication" section of each role's README.md) using only the
+# standard library (base64 + hmac) - no httpd, no mod_ssl, no Flask,
+# no session/cookie state.
+#
+# One shared username/password protects both dashboards by design (both
+# roles' defaults read dashboard_auth_user/dashboard_auth_password via
+# a `| default(...)` fallback - see roles/log_search_ui/defaults/main.yml
+# and roles/linuxdb_dashboard/defaults/main.yml). Override
+# log_search_ui_auth_user/_password or linuxdb_dashboard_auth_user/_password
+# directly instead if you ever want the two dashboards to use different
+# credentials.
+#
+# CHANGE THE PASSWORD before using this outside a throwaway lab - same
+# vault workflow already documented in group_vars/all/log_db.yml for the
+# database passwords:
+#
+#   ansible-vault create group_vars/all/dashboard_auth_secrets.yml
+#
+#   dashboard_auth_password: "a real password here"
+#
+# ...then this file's dashboard_auth_password value is naturally
+# overridden by the vaulted one (group_vars/all/*_secrets.yml is already
+# excluded from git by .gitignore, and merges over this file's plain
+# defaults since Ansible merges all group_vars/all/*.yml together).
+dashboard_auth_user: admin
+dashboard_auth_password: CHANGE_ME_dashboard_admin
+
+# --- Kerberos / AD / IdM authentication mode (optional) ---------------
+# Both dashboards default to dashboard_auth_mode: local - the shared
+# admin/password Basic Auth configured above, checked against the
+# values in this file. Set dashboard_auth_mode to "kerberos" instead to
+# validate each submitted Basic Auth username/password against a real
+# Kerberos realm - FreeIPA/IdM or Active Directory, both are just
+# Kerberos KDCs under the hood, so the exact same code path works
+# against either - via a throwaway `kinit`, rather than the local
+# password above.
+#
+# This mode assumes the target host is ALREADY domain-joined (realmd/
+# SSSD, or an IdM<->AD trust) with krb5-workstation already installed.
+# This role never installs krb5-workstation for you - it only ever
+# *checks for* kinit/kdestroy at deploy time (see tasks/main.yml) and
+# fails with a clear message if they're missing, same "check for, never
+# install" pattern already used elsewhere in this repo for kinit/
+# getcert/sssctl.
+#
+# No password is ever stored by this role in kerberos mode. Each login
+# attempt's password is piped directly to kinit via stdin (never
+# written to disk, never visible in `ps`), used once to obtain a
+# throwaway ticket in a dedicated cache file, and that cache is
+# destroyed (kdestroy) immediately after the pass/fail check - see the
+# "Kerberos authentication mode" section of each role's README.md.
+dashboard_auth_mode: kerberos
+
+# Realm to authenticate against when dashboard_auth_mode is "kerberos",
+# e.g. "LAB.EXAMPLE.COM" (FreeIPA/IdM) or "CORP.EXAMPLE.COM" (AD).
+# Required whenever kerberos mode is enabled - each app.py fails closed
+# (denies every login) if this is left empty while AUTH_MODE is
+# "kerberos", rather than silently falling back to local auth.
+dashboard_auth_kerberos_realm: LAB.EXAMPLE.COM
+
+# Optional POSIX/AD group name. If set, a user must both (a) pass the
+# kinit check above AND (b) be a member of this group - checked via
+# `getent group` (supplementary members) and `id -nG` (covers primary
+# group too), both backed by the same SSSD cache already used for name
+# resolution on a domain-joined host - to be let in. Leave empty (the
+# default) to allow any successfully-authenticated principal in the
+# realm above, with no group restriction.
+dashboard_auth_kerberos_required_group: ""
+
+# Full paths to the Kerberos/NSS command-line tools used at runtime by
+# the app in Kerberos auth mode. Override only if your host's
+# krb5-workstation/glibc-common packages install these somewhere
+# non-standard - the defaults match every current RHEL release.
+dashboard_auth_kerberos_kinit_path: "/usr/bin/kinit"
+dashboard_auth_kerberos_kdestroy_path: "/usr/bin/kdestroy"
+dashboard_auth_kerberos_getent_path: "/usr/bin/getent"
+dashboard_auth_kerberos_id_path: "/usr/bin/id"

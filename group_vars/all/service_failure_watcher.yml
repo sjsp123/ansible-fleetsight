@@ -1,0 +1,16 @@
+---
+# group_vars/all/service_failure_watcher.yml
+# Fleet-wide overrides for roles/service_failure_watcher (see that
+# role's defaults/main.yml for the full variable list). Uncomment/edit
+# as needed - this follows the same pattern as group_vars/all/log_db.yml.
+
+# Opt-in toggle - defaults to false/off in roles/service_failure_watcher's
+# own defaults; this file flips it on for playbooks/centralized_logging.yml.
+# Only ever applies to [log_collector] - it is a no-op on [log_clients].
+service_failure_watcher_enabled: true
+
+# service_failure_watcher_poll_interval_seconds: 30
+# service_failure_watcher_email_to: root
+# See roles/service_failure_watcher/README.md "Mail delivery" - this
+# always relays through the collector's OWN local mail transport agent
+# (e.g. admin1's Postfix), never an external SMTP relay directly.

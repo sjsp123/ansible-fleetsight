@@ -1,0 +1,84 @@
+---
+# roles/host_availability_watcher/defaults/main.yml
+#
+# Active, fleet-wide "is the host even reachable" alerting - pings and
+# checks the SSH port of every host in host_availability_watcher_hosts
+# directly from this collector, and emails a summary the moment a
+# host's availability STATE changes (not on every poll while it
+# persists). Unlike roles/service_failure_watcher and roles/
+# log_alerter (both entirely dependent on the log pipeline - a fully
+# dead host can't forward a log line about its own death), this is the
+# only one of the three mechanisms that can detect a completely
+# unreachable host - see README.md "How it works".
+#
+# This role is only ever deployed to [log_collector] (see
+# playbooks/centralized_logging.yml) - it runs `ping`/opens a TCP
+# socket FROM the collector TO every other host, so it needs no agent
+# and no log forwarding on the monitored hosts at all.
+
+# Opt-in, matching the pattern used by roles/log_alerter and
+# roles/service_failure_watcher: this role's own default is false;
+# group_vars/all/host_availability_watcher.yml flips it on fleet-wide
+# by default in this repo.
+host_availability_watcher_enabled: false
+
+# Poll cadence. These are cheap active checks (a couple of ICMP
+# packets + a TCP connect per host), so a much shorter interval than
+# the reporting cron is fine.
+host_availability_watcher_poll_interval_seconds: 60
+
+# How many CONSECUTIVE failed polls in a row are required before a
+# state is considered real and alerted on - guards against a single
+# blip (a missed ping during normal jitter, a reboot mid-poll, etc.)
+# causing a false alarm. At the default poll interval this means a
+# genuine outage is detected within ~2 minutes.
+host_availability_watcher_consecutive_failures_threshold: 2
+
+# ICMP ping check. RHEL's iputils `ping` binary ships with
+# cap_net_raw already applied (not setuid), so the unprivileged
+# service account below can run it with no sudo/capabilities work
+# needed on a stock install.
+host_availability_watcher_ping_count: 2
+host_availability_watcher_ping_timeout_seconds: 2
+
+# SSH reachability check. This ONLY confirms something is listening
+# and accepting TCP connections on the port - it deliberately never
+# attempts to authenticate, so no SSH credentials/keys are ever
+# needed on (or stored on) the collector.
+host_availability_watcher_ssh_port: 22
+host_availability_watcher_ssh_timeout_seconds: 3
+
+# Which hosts to watch. Defaults to every host already in
+# [log_clients] (the same group roles/rsyslog_client targets), so this
+# stays in sync with the fleet automatically - override with an
+# explicit list if you want a different set (e.g. to exclude the
+# collector itself).
+host_availability_watcher_hosts: "{{ groups.get('log_clients', []) }}"
+
+# Send a second email when a host recovers (state returns to UP), not
+# just when it goes down/degrades. Set to false if you only want to
+# be told about outages, not resolutions.
+host_availability_watcher_notify_recovery: true
+
+# Where per-host state (consecutive failure counts, current state,
+# and when that state began) is persisted between runs - a single
+# JSON file, not a database, matching
+# roles/service_failure_watcher_state_file's approach.
+host_availability_watcher_state_dir: /var/lib/host_availability_watcher
+host_availability_watcher_state_file: "{{ host_availability_watcher_state_dir }}/state.json"
+
+# Unprivileged system account the timer/service runs as.
+host_availability_watcher_user: svc_host_watch
+
+host_availability_watcher_app_dir: /opt/host_availability_watcher
+
+# Mail delivery - always the LOCAL mail transport agent on
+# host_availability_watcher_smtp_host (the collector's own MTA, e.g.
+# admin1's Postfix), never an external relay directly, matching
+# roles/service_failure_watcher/roles/log_alerter - see README.md
+# "Mail delivery".
+host_availability_watcher_email_to:
+  - root
+host_availability_watcher_email_from: "rhel-alerts@{{ ansible_fqdn | default(ansible_hostname) }}"
+host_availability_watcher_smtp_host: localhost
+host_availability_watcher_smtp_port: 25

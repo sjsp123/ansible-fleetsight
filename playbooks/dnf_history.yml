@@ -1,0 +1,114 @@
+---
+- name: Report latest dnf history transaction to CSV
+  hosts: "{{ target_host }}"
+  become: true
+  gather_facts: true
+
+  vars_prompt:
+    - name: target_host
+      prompt: "Enter target host or inventory group"
+      private: no
+      default: "all"
+      # default lets an interactive run just press Enter for the common
+      # case. For unattended/cron runs, ALWAYS pass -e target_host=all
+      # (or a specific group) explicitly rather than relying on this
+      # default alone - Ansible skips vars_prompt entirely when the var
+      # is already supplied via --extra-vars, which is the reliable,
+      # version-proof way to guarantee a non-interactive run never blocks
+      # waiting on a stdin prompt that cron can't answer.
+
+  vars:
+    csv_file: /tmp/dnf_history_report.csv
+
+  tasks:
+    - name: Get latest dnf transaction details
+      ansible.builtin.shell: |
+        dnf history info last
+      register: dnf_history_info
+      changed_when: false
+
+    - name: Build DNF end timestamp or fallback
+      ansible.builtin.shell: |
+        echo "{{ dnf_history_info.stdout }}" |
+        awk '
+          /^End time[[:space:]]*:/ {
+            day = $5
+            mon = $6
+            year = $7
+            time = $8
+
+            mn = mon
+            gsub("Jan","01",mn); gsub("Feb","02",mn); gsub("Mar","03",mn);
+            gsub("Apr","04",mn); gsub("May","05",mn); gsub("Jun","06",mn);
+            gsub("Jul","07",mn); gsub("Aug","08",mn); gsub("Sep","09",mn);
+            gsub("Oct","10",mn); gsub("Nov","11",mn); gsub("Dec","12",mn);
+
+            gsub(":", "-", time);
+            printf "%s-%s-%s:%s\n", year, mn, day, time;
+            found=1;
+          }
+          END {
+            if (!found) {
+              printf "%s:%s\n", ENVIRON["ANSIBLE_DATE"], ENVIRON["ANSIBLE_TIME"];
+            }
+          }
+        '
+      environment:
+        ANSIBLE_DATE: "{{ ansible_date_time.date }}"
+        ANSIBLE_TIME: "{{ ansible_date_time.time | replace(':', '-') }}"
+      register: dnf_end_ts_raw
+      changed_when: false
+
+    - name: Split end timestamp into date/time facts
+      ansible.builtin.set_fact:
+        dnf_date_final: "{{ dnf_end_ts_raw.stdout.split(':')[0] }}"
+        dnf_time_final: "{{ dnf_end_ts_raw.stdout.split(':')[1] }}"
+
+    - name: Count installed packages
+      ansible.builtin.shell: |
+        echo "{{ dnf_history_info.stdout }}" | grep -cE '^[[:space:]]+Install[[:space:]]+'
+      register: installed_count_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Count upgraded packages
+      ansible.builtin.shell: |
+        echo "{{ dnf_history_info.stdout }}" | grep -cE '^[[:space:]]+Upgrade[[:space:]]+'
+      register: updated_count_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Count removed packages
+      ansible.builtin.shell: |
+        echo "{{ dnf_history_info.stdout }}" | grep -cE '^[[:space:]]+Removed[[:space:]]+'
+      register: removed_count_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Normalize counts to integers
+      ansible.builtin.set_fact:
+        installed_count: "{{ installed_count_raw.stdout | default('0') | int }}"
+        updated_count: "{{ updated_count_raw.stdout | default('0') | int }}"
+        removed_count: "{{ removed_count_raw.stdout | default('0') | int }}"
+
+    - name: Create CSV header on control node
+      ansible.builtin.lineinfile:
+        path: "{{ csv_file }}"
+        line: "Hostname,Date,Installed,Updated,Remove"
+        create: true
+        mode: "0644"
+        state: present
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Append host result to CSV on control node
+      ansible.builtin.lineinfile:
+        path: "{{ csv_file }}"
+        insertafter: EOF
+        mode: "0644"
+        line: "{{ inventory_hostname }},{{ dnf_date_final }}:{{ dnf_time_final }},{{ installed_count }},{{ updated_count }},{{ removed_count }}"
+        create: true
+      delegate_to: localhost
+      become: false
+      throttle: 1

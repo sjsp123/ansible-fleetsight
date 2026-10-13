@@ -1,0 +1,84 @@
+---
+# playbooks/system_poweroff.yml
+#
+# Gracefully shuts down RHEL/Oracle Linux 7-10 hosts - physical HPE
+# ProLiant DL380 Gen10/Gen11 or virtual - and confirms each one is
+# actually powered off: out-of-band via iLO/IPMI for hosts in the
+# [hpe_ilo_hosts] inventory group, or a network-reachability check for
+# everything else. See roles/system_poweroff/README.md for the full
+# design, safety gates, and "what this does not cover" caveats.
+#
+# There is no default target and no default confirmation, on purpose.
+# You still always need -e system_poweroff_confirm=true to actually
+# shut anything down - that gate is never skippable. But target_hosts
+# now has two ways to get set:
+#
+#   1. Non-interactive (e.g. cron/AAP job templates) - pass it with -e,
+#      exactly as before. When target_hosts is supplied this way the
+#      prompt below is skipped automatically and this behaves
+#      identically to running it non-interactively:
+#
+#        ansible-playbook playbooks/system_poweroff.yml \
+#          -e target_hosts=client1.lab.example.com \
+#          -e system_poweroff_confirm=true
+#
+#   2. Interactive (running it by hand at a terminal) - omit
+#      -e target_hosts=... and you'll be prompted for it:
+#
+#        ansible-playbook playbooks/system_poweroff.yml \
+#          -e system_poweroff_confirm=true
+#        Which inventory group or host(s) do you want to power off?
+#        (e.g. hpe_ilo_hosts, or a comma-separated hostname list): _
+#
+# Either way, target_hosts can be a single host, a comma-separated
+# list, or any inventory group (e.g. hpe_ilo_hosts). ALWAYS
+# sanity-check the exact host list first with --list-hosts before
+# adding the confirm flag - this only works with the -e form, since
+# --list-hosts never runs the interactive prompt:
+#
+#   ansible-playbook playbooks/system_poweroff.yml \
+#     -e target_hosts=hpe_ilo_hosts --list-hosts
+#
+# To re-run just the verification step against a host you already
+# shut down some other way (without re-triggering `shutdown -h now`),
+# add -e system_poweroff_skip_shutdown=true.
+#
+# Hosts are processed one at a time by default (serial: 1), and in
+# the exact order they appear in the inventory (Ansible's default
+# play host-order is inventory-file order, not alphabetical - verified
+# against this repo's inventory.example.ini group ordering), so a
+# clustered/replicated service never loses more than one member at
+# once, in a predictable sequence you control by editing the
+# inventory file. Override the batch size with
+# -e system_poweroff_serial=N if you understand the blast radius of a
+# bigger batch; the inventory order still applies either way.
+
+- name: Power down RHEL/Oracle Linux servers and confirm they are off
+  hosts: "{{ target_hosts | mandatory }}"
+  become: true
+  gather_facts: true
+  serial: "{{ system_poweroff_serial | default(1) }}"
+
+  vars_prompt:
+    - name: target_hosts
+      prompt: >-
+        Which inventory group or host(s) do you want to power off?
+        (e.g. hpe_ilo_hosts, or a comma-separated hostname list)
+      private: false
+
+  roles:
+    - system_poweroff
+
+- name: Fleet-wide power-off summary
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Print one line per host that ran through system_poweroff
+      ansible.builtin.debug:
+        msg: >-
+          {{ item }}:
+          {{ 'CONFIRMED OFF' if (hostvars[item].system_poweroff_result.confirmed_off | default(false)) else 'NOT CONFIRMED' }}
+          ({{ hostvars[item].system_poweroff_result.method | default('not run') }})
+      loop: "{{ groups['all'] }}"
+      when: hostvars[item].system_poweroff_result is defined

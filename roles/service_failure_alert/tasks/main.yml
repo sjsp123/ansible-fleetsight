@@ -1,0 +1,65 @@
+---
+# roles/service_failure_alert/tasks/main.yml
+#
+# Deploys a small alert script plus a templated systemd unit
+# (service-failure-alert@.service), then adds an OnFailure= drop-in to
+# every covered unit so systemd itself fires the alert the instant
+# that unit enters the failed state - see README.md for the full
+# mechanism and how to test it.
+
+- name: Build the list of systemd units to cover on this host
+  ansible.builtin.set_fact:
+    service_failure_alert_units: >-
+      {{
+        (service_failure_alert_always_units
+         + service_failure_alert_extra_units
+         + (['rsm222.service'] if inventory_hostname in (rsm222_hosts | default([])) else [])
+         + (['rsm232.service'] if inventory_hostname in (rsm232_hosts | default([])) else []))
+        | unique
+      }}
+
+- name: Deploy the alert-on-failure script
+  ansible.builtin.template:
+    src: service_failure_alert.py.j2
+    dest: "{{ service_failure_alert_script_path }}"
+    owner: root
+    group: root
+    mode: "0750"
+  become: true
+
+- name: Deploy the service-failure-alert@.service template unit
+  ansible.builtin.template:
+    src: "service-failure-alert@.service.j2"
+    dest: /etc/systemd/system/service-failure-alert@.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd
+
+- name: Ensure a drop-in directory exists for each covered unit
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ service_failure_alert_units }}"
+  become: true
+
+- name: Wire OnFailure= into each covered unit via a drop-in
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item }}.d/service-failure-alert.conf"
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/service_failure_alert) - do not edit by hand.
+      [Unit]
+      OnFailure=service-failure-alert@%n.service
+  loop: "{{ service_failure_alert_units }}"
+  become: true
+  notify: Reload systemd
+
+- name: Apply systemd unit/drop-in changes now
+  ansible.builtin.meta: flush_handlers

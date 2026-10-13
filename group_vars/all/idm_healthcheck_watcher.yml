@@ -1,0 +1,19 @@
+---
+# group_vars/all/idm_healthcheck_watcher.yml
+# Fleet-wide overrides for roles/idm_healthcheck_watcher (see that
+# role's defaults/main.yml for the full variable list). Uncomment/edit
+# as needed - this follows the same pattern as
+# group_vars/all/disk_space_watcher.yml.
+
+# Opt-in toggle - defaults to false/off in roles/idm_healthcheck_watcher's
+# own defaults; this file flips it on for
+# playbooks/centralized_logging.yml. Only ever applies to
+# [log_collector] - it is a no-op on [idm]/[log_clients].
+idm_healthcheck_watcher_enabled: true
+
+# idm_healthcheck_watcher_poll_interval_seconds: 60
+# idm_healthcheck_watcher_max_rows_per_email: 50
+# idm_healthcheck_watcher_email_to: root
+# See roles/idm_healthcheck_watcher/README.md "Mail delivery" - this
+# always relays through the collector's OWN local mail transport agent
+# (e.g. admin1's Postfix), never an external SMTP relay directly.

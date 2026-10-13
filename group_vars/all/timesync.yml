@@ -1,0 +1,18 @@
+---
+# group_vars/all/timesync.yml
+# Fleet-wide settings for chrony/NTP deployment via
+# redhat.rhel_system_roles.timesync (playbooks/deploy_timesync_role.yml -
+# the standard time sync path in this repo; see
+# rhel_system_roles/README.md).
+
+# Reuses the effective chrony_ntp_servers YAML list for each host.
+# group_vars/all/site_hosts.yml supplies the environment default;
+# group_vars/<realm_group>/site_hosts.yml can override it per realm.
+# Keep real server names in these locally maintained files.
+#
+# Named timesync_ntp_hostnames (not timesync_ntp_servers) to avoid
+# colliding with the redhat.rhel_system_roles.timesync role's own
+# timesync_ntp_servers variable, which expects a list of dicts
+# ({hostname, iburst}) rather than plain strings -
+# playbooks/deploy_timesync_role.yml builds that list from this one.
+timesync_ntp_hostnames: "{{ chrony_ntp_servers | default(['0.rhel.pool.ntp.org', '1.rhel.pool.ntp.org']) }}"

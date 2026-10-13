@@ -1,0 +1,78 @@
+---
+# roles/log_alerter/defaults/main.yml
+#
+# Real-time-ish alerting from the already-continuous centralized log
+# pipeline (roles/rsyslog_collector -> roles/log_db), instead of only
+# noticing something while browsing log_search_ui. Polls the log_db
+# database on a short systemd timer for new rows at or more severe
+# than log_alerter_severity_threshold and emails a single batched
+# summary - see README.md "How it works" and "Choosing the threshold".
+
+# Opt-in, matching the pattern used by roles/log_db, roles/log_search_ui,
+# etc: this role's own default is false; group_vars/all/log_db.yml
+# flips it on fleet-wide by default in this repo.
+log_alerter_enabled: false
+
+# Poll cadence. Independent of, and much shorter than, any
+# hostinfo/linuxdb_reports cron interval - this is what makes this
+# "real-time-ish" rather than waiting for the next scheduled run.
+log_alerter_poll_interval_seconds: 60
+
+# RFC 5424 syslog severity numbering (0=emerg ... 7=debug, LOWER number
+# = MORE severe). A row is eligible for an alert email if its
+# `priority` column value is <= this. Default 4 (warning) -
+# deliberately ignores the always-keep-facility carve-out that
+# roles/rsyslog_collector's DB filter uses for authpriv/cron (that
+# carve-out exists so routine notice/info-level sudo and cron activity
+# is never lost for audit purposes, not because that routine activity
+# deserves an email every time it happens).
+#
+# IMPORTANT: this can only alert on rows that actually made it into
+# the database in the first place. Keep this value >= (i.e. no MORE
+# severe than) rsyslog_collector_db_min_severity, or some of what
+# you're asking to be alerted on will never arrive here to alert on.
+# Default rsyslog_collector_db_min_severity is 5 (notice), so the
+# default 4 (warning) here is safely inside that window. If you ever
+# lower rsyslog_collector_db_min_severity's number (i.e. make the DB
+# MORE selective / store FEWER severities), you must lower this value
+# to match or you will silently stop being alerted on things that
+# still show a warning triangle in log_search_ui.
+log_alerter_severity_threshold: 4
+
+# Hard cap on how many individual log lines are listed in a single
+# alert email body - protects against one noisy flood (e.g. a repeated
+# error every second) turning into an unreadable wall of text. The
+# email always states the true total and how many were omitted.
+log_alerter_max_rows_per_email: 50
+
+# Where the "last row already alerted on" watermark is persisted
+# between runs (a single JSON file, not the database itself - this
+# keeps the role from needing any write privilege on log_db at all; it
+# reuses the existing SELECT-only log_db_reader_user/_password, same
+# as roles/log_search_ui - see roles/log_db/README.md).
+log_alerter_state_dir: /var/lib/log_alerter
+log_alerter_state_file: "{{ log_alerter_state_dir }}/state.json"
+
+# Unprivileged system account the timer/service runs as.
+log_alerter_user: log_alerter
+
+log_alerter_app_dir: /opt/log_alerter
+
+# Read-only database connection - defaults to the matching log_db_*
+# variables (same pattern roles/log_search_ui already uses) so this
+# stays in sync automatically as long as you only override the
+# log_db_*/rsyslog_collector_db_host versions, not these directly.
+log_alerter_db_host: "{{ rsyslog_collector_db_host | default('localhost') }}"
+log_alerter_db_name: "{{ log_db_name | default('syslog') }}"
+log_alerter_db_table: "{{ log_db_table | default('systemevents') }}"
+log_alerter_db_user: "{{ log_db_reader_user | default('log_search') }}"
+log_alerter_db_password: "{{ log_db_reader_password | default('CHANGE_ME_log_search_reader') }}"
+
+# Mail delivery - see README.md "Mail delivery": this always talks to
+# the LOCAL mail transport agent on log_alerter_smtp_host, never an
+# external relay directly, so no relay credentials are needed or
+# stored here.
+log_alerter_email_to: root
+log_alerter_email_from: "rhel-alerts@{{ ansible_fqdn | default(ansible_hostname) }}"
+log_alerter_smtp_host: localhost
+log_alerter_smtp_port: 25

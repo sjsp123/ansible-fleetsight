@@ -1,0 +1,84 @@
+---
+# roles/idm_healthcheck_watcher/tasks/main.yml
+#
+# Deploys a small stdlib+psycopg2 poller that emails an alert whenever
+# a new "idm_healthcheck_watch: ..." row lands in log_db -
+# roles/idm_healthcheck_watch's own fixed wording for a non-SUCCESS
+# ipa-healthcheck finding, from any [idm] host already forwarding logs
+# to this collector - see README.md. Only ever run against
+# [log_collector].
+
+- name: Install python3-psycopg2 (RHEL BaseOS/AppStream - same package roles/log_db already installs)
+  ansible.builtin.package:
+    name: python3-psycopg2
+    state: present
+  become: true
+
+- name: Create the unprivileged idm_healthcheck_watcher system account
+  ansible.builtin.user:
+    name: "{{ idm_healthcheck_watcher_user }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ idm_healthcheck_watcher_app_dir }}"
+    create_home: false
+  become: true
+
+- name: Create the app and state directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ idm_healthcheck_watcher_user }}"
+    group: "{{ idm_healthcheck_watcher_user }}"
+    mode: "0750"
+  loop:
+    - "{{ idm_healthcheck_watcher_app_dir }}"
+    - "{{ idm_healthcheck_watcher_state_dir }}"
+  become: true
+
+- name: Deploy the config file
+  ansible.builtin.template:
+    src: config.py.j2
+    dest: "{{ idm_healthcheck_watcher_app_dir }}/config.py"
+    owner: "{{ idm_healthcheck_watcher_user }}"
+    group: "{{ idm_healthcheck_watcher_user }}"
+    mode: "0640"
+  become: true
+
+- name: Deploy the poller script
+  ansible.builtin.copy:
+    src: idm_healthcheck_watcher.py
+    dest: "{{ idm_healthcheck_watcher_app_dir }}/idm_healthcheck_watcher.py"
+    owner: "{{ idm_healthcheck_watcher_user }}"
+    group: "{{ idm_healthcheck_watcher_user }}"
+    mode: "0750"
+  become: true
+
+- name: Deploy the systemd service unit
+  ansible.builtin.template:
+    src: idm-healthcheck-watcher.service.j2
+    dest: /etc/systemd/system/idm-healthcheck-watcher.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd
+
+- name: Deploy the systemd timer unit
+  ansible.builtin.template:
+    src: idm-healthcheck-watcher.timer.j2
+    dest: /etc/systemd/system/idm-healthcheck-watcher.timer
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd
+
+- name: Apply systemd unit changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the idm-healthcheck-watcher timer
+  ansible.builtin.systemd:
+    name: idm-healthcheck-watcher.timer
+    state: started
+    enabled: true
+  become: true

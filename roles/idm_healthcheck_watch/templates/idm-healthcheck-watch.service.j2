@@ -1,0 +1,14 @@
+# Managed by Ansible (roles/idm_healthcheck_watch) - do not edit by hand.
+[Unit]
+Description=Run ipa-healthcheck locally and log any non-SUCCESS finding to syslog
+After=network.target ipa.service
+
+[Service]
+# Deliberate deviation from roles/disk_space_check/roles/chrony_check
+# (which run as an unprivileged system account): ipa-healthcheck
+# requires root to inspect 389-ds/certmonger/replication internals -
+# see roles/idm_healthcheck_watch/README.md "Why this runs as root".
+Type=oneshot
+User=root
+WorkingDirectory={{ idm_healthcheck_watch_app_dir }}
+ExecStart=/usr/bin/python3 {{ idm_healthcheck_watch_app_dir }}/idm_healthcheck_watch.py

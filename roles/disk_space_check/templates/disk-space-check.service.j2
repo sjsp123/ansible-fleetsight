@@ -1,0 +1,10 @@
+# Managed by Ansible (roles/disk_space_check) - do not edit by hand.
+[Unit]
+Description=Check local disk space and inode usage against thresholds and log any breach
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User={{ disk_space_check_user }}
+WorkingDirectory={{ disk_space_check_app_dir }}
+ExecStart=/usr/bin/python3 {{ disk_space_check_app_dir }}/disk_space_check.py

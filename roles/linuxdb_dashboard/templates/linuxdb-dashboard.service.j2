@@ -1,0 +1,39 @@
+# Managed by Ansible (roles/linuxdb_dashboard) - do not edit by hand.
+#
+# Standalone stdlib WSGI server (wsgiref.simple_server, threaded) - no
+# httpd, no mod_wsgi, no third-party Python packages. Read-only web UI
+# over hostinfo.csv and the linuxdb_reports diagnostic history.
+
+[Unit]
+Description=LinuxDB Dashboard (read-only hostinfo + diagnostics web UI)
+After=network.target
+
+[Service]
+Type=simple
+User={{ linuxdb_dashboard_user }}
+Group={{ linuxdb_dashboard_user }}
+Environment=LINUXDB_DASHBOARD_APP_DIR={{ linuxdb_dashboard_app_dir }}
+Environment=LINUXDB_DASHBOARD_HOST=0.0.0.0
+Environment=LINUXDB_DASHBOARD_PORT={{ linuxdb_dashboard_port }}
+ExecStart=/usr/bin/python3 {{ linuxdb_dashboard_app_dir }}/wsgi_standalone_server.py
+Restart=on-failure
+RestartSec=3
+
+# Hardening: this process only ever reads hostinfo.csv and the
+# linuxdb_reports data directory for its normal read-only pages - it
+# never writes application data anywhere. PrivateTmp=yes IS required
+# despite that: in Kerberos auth mode (linuxdb_dashboard_auth_mode:
+# kerberos), app.py creates a short-lived Kerberos ticket-cache file
+# under /tmp for each login check (see "Kerberos authentication mode"
+# in README.md). Under ProtectSystem=strict the real /tmp is mounted
+# read-only for this service, so without PrivateTmp=yes that tempfile
+# creation fails and every Kerberos login is denied (fails closed) -
+# PrivateTmp=yes gives the service its own small writable tmpfs
+# instead, with no effect on local-auth-mode deployments.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

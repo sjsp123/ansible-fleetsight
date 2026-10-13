@@ -1,0 +1,135 @@
+---
+# roles/lineage/tasks/main.yml
+#
+# Deploys lineage.py (a stdlib-only "why is this running?" causality
+# tracer - see roles/lineage/files/lineage.py header for what it
+# does) and runs it against whatever target(s) the caller specified.
+#
+# Any of target / target_pid / target_port / target_file / target_container
+# accepts a comma-separated list to query several values in one run, e.g.
+#   -e target=nginx,postgres -e target_port=8081,5432
+# The script itself already accepts multiple positional names and repeated
+# --pid/--port/--file/--container flags in a single invocation - this just
+# fans a comma-separated -e value out into the repeated flags it expects.
+# (target_file is comma-split too for consistency; if a path genuinely
+# contains a literal comma, pass a single target_file value instead, or run
+# the script directly - see README.md "Multiple targets in one run".)
+
+- name: Ensure the install directory exists
+  ansible.builtin.file:
+    path: "{{ lineage_install_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Deploy the why-running diagnostic script
+  ansible.builtin.copy:
+    src: lineage.py
+    dest: "{{ lineage_install_path }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Split comma-separated target inputs into lists
+  ansible.builtin.set_fact:
+    lineage_name_list: "{{ (lineage_target | default('')).split(',') | map('trim') | reject('equalto', '') | list }}"
+    lineage_pid_list: "{{ (lineage_pid | default('')).split(',') | map('trim') | reject('equalto', '') | list }}"
+    lineage_port_list: "{{ (lineage_port | default('')).split(',') | map('trim') | reject('equalto', '') | list }}"
+    lineage_file_list: "{{ (lineage_file | default('')).split(',') | map('trim') | reject('equalto', '') | list }}"
+    lineage_container_list: "{{ (lineage_container | default('')).split(',') | map('trim') | reject('equalto', '') | list }}"
+
+# Ansible/Jinja has no filter that flattens a flag onto every list item in
+# one expression, so each repeatable flag is built by accumulating
+# ['--flag', value] pairs across a loop instead - a standard Ansible
+# accumulator pattern (each iteration appends onto the previous result).
+- name: Build --pid pairs
+  ansible.builtin.set_fact:
+    lineage_pid_pairs: "{{ lineage_pid_pairs | default([]) + ['--pid', item] }}"
+  loop: "{{ lineage_pid_list }}"
+  loop_control:
+    label: "--pid {{ item }}"
+
+- name: Build --port pairs
+  ansible.builtin.set_fact:
+    lineage_port_pairs: "{{ lineage_port_pairs | default([]) + ['--port', item] }}"
+  loop: "{{ lineage_port_list }}"
+  loop_control:
+    label: "--port {{ item }}"
+
+- name: Build --file pairs
+  ansible.builtin.set_fact:
+    lineage_file_pairs: "{{ lineage_file_pairs | default([]) + ['--file', item] }}"
+  loop: "{{ lineage_file_list }}"
+  loop_control:
+    label: "--file {{ item }}"
+
+- name: Build --container pairs
+  ansible.builtin.set_fact:
+    lineage_container_pairs: "{{ lineage_container_pairs | default([]) + ['--container', item] }}"
+  loop: "{{ lineage_container_list }}"
+  loop_control:
+    label: "--container {{ item }}"
+
+# Built as a list rather than a shell string so no target value (a file
+# path with spaces, a container name, etc.) ever needs manual quoting -
+# ansible.builtin.command's argv form passes each element straight to
+# execve() with no shell involved.
+- name: Build the why-running argument list
+  ansible.builtin.set_fact:
+    lineage_args: >-
+      {{
+        lineage_name_list
+        + (lineage_pid_pairs | default([]))
+        + (lineage_port_pairs | default([]))
+        + (lineage_file_pairs | default([]))
+        + (lineage_container_pairs | default([]))
+        + (['--exact'] if lineage_exact else [])
+        + (['--short'] if lineage_mode == 'short' else [])
+        + (['--tree'] if lineage_mode == 'tree' else [])
+        + (['--json'] if lineage_mode == 'json' else [])
+        + (['--env'] if lineage_mode == 'env' else [])
+        + (['--warnings'] if lineage_mode == 'warnings' else [])
+        + (['--verbose'] if lineage_verbose else [])
+      }}
+
+- name: Fail fast if no target was given
+  ansible.builtin.fail:
+    msg: >-
+      No target specified. Pass one of -e target=<name>[,<name2>...],
+      -e target_pid=<pid>[,<pid2>...], -e target_port=<port>[,<port2>...],
+      -e target_file=<path>[,<path2>...], -e target_container=<name>[,<name2>...].
+      See roles/lineage/README.md for copy-paste examples.
+  when: lineage_args | length == 0
+
+- name: Run why-running against the resolved target(s)
+  ansible.builtin.command:
+    argv: "{{ [lineage_install_path] + lineage_args }}"
+  register: lineage_result
+  changed_when: false
+  # Only a genuine internal error (5) fails the play. The other non-zero
+  # codes (warnings/not-found/permission/invalid-input) are meaningful
+  # diagnostic results, not automation failures - they're surfaced below
+  # instead of aborting the run.
+  failed_when: lineage_result.rc == 5
+
+- name: Show why-running output
+  ansible.builtin.debug:
+    msg: "{{ lineage_result.stdout_lines }}"
+
+- name: Show stderr when the script hit an internal error
+  ansible.builtin.debug:
+    var: lineage_result.stderr_lines
+  when: lineage_result.rc == 5
+
+- name: Interpret a non-zero exit code
+  ansible.builtin.debug:
+    msg: "{{ lineage_exit_meaning[lineage_result.rc | string] | default('Unknown exit code ' ~ lineage_result.rc) }}"
+  when: lineage_result.rc != 0
+  vars:
+    lineage_exit_meaning:
+      "1": "Warnings detected - process found but flagged one or more warnings (see above)."
+      "2": "Not found - no matching process, port, file holder, or container on this host."
+      "3": "Permission denied - re-run with become: true (this role already does) for full detail."
+      "4": "Invalid input, or an ambiguous name match on at least one target - see the candidates listed above and re-run that one with -e target_pid=<pid>."
+      "5": "Internal error in lineage.py - see stderr above."

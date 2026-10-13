@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/idm_healthcheck_watch) - do not edit by hand.
+[Unit]
+Description=Run idm-healthcheck-watch.service every {{ idm_healthcheck_watch_poll_interval_seconds }}s
+
+[Timer]
+OnBootSec=120s
+OnUnitActiveSec={{ idm_healthcheck_watch_poll_interval_seconds }}s
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,302 @@
+---
+# roles/log_db/tasks/main.yml
+#
+# Sets up a local PostgreSQL database to store centrally-collected log
+# messages: written to by roles/rsyslog_collector (when
+# rsyslog_collector_db_enabled is true) and read by roles/log_search_ui.
+# Everything here comes from RHEL AppStream packages (postgresql-server,
+# postgresql-contrib) plus the community.postgresql Ansible collection for
+# idempotent database management - see requirements.yml. Tested against
+# RHEL 8 (legacy dnf module packaging for PostgreSQL), RHEL 9, and RHEL 10
+# (both non-modular) - see the module-stream tasks below and README
+# "RHEL 8/9/10 differences".
+
+- name: Check which postgresql dnf module stream is currently enabled (RHEL 8 only)
+  ansible.builtin.command: dnf -q module list --enabled postgresql
+  register: log_db_pg_module_enabled
+  changed_when: false
+  failed_when: false
+  become: true
+  when: ansible_facts['distribution_major_version'] == '8'
+
+- name: Enable the required postgresql module stream (RHEL 8 only)
+  ansible.builtin.command: "dnf -y module enable postgresql:{{ log_db_postgresql_stream }}"
+  become: true
+  register: log_db_pg_module_enable_result
+  changed_when: "'Nothing to do' not in log_db_pg_module_enable_result.stdout"
+  when:
+    - ansible_facts['distribution_major_version'] == '8'
+    - log_db_postgresql_stream not in log_db_pg_module_enabled.stdout
+
+- name: Install PostgreSQL server and contrib extensions
+  ansible.builtin.package:
+    name:
+      - postgresql-server
+      - postgresql-contrib
+      - python3-psycopg2
+    state: present
+  become: true
+
+- name: Check whether the PostgreSQL data directory is already initialized
+  ansible.builtin.stat:
+    path: /var/lib/pgsql/data/PG_VERSION
+  register: log_db_pgdata
+
+- name: Initialize the PostgreSQL database cluster
+  ansible.builtin.command:
+    cmd: postgresql-setup --initdb
+  become: true
+  when: not log_db_pgdata.stat.exists
+
+- name: Set listen_addresses in postgresql.conf
+  ansible.builtin.lineinfile:
+    path: /var/lib/pgsql/data/postgresql.conf
+    regexp: "^#?listen_addresses\\s*="
+    line: "listen_addresses = '{{ log_db_listen_addresses }}'"
+    backup: true
+  become: true
+  notify: Restart postgresql
+  # 'postgresql-setup --initdb' above is a command task, which Ansible
+  # always skips under --check (it can't simulate arbitrary commands) -
+  # so on a brand-new host being previewed with --check, postgresql.conf
+  # genuinely doesn't exist yet and this task would hard-fail instead of
+  # giving a preview. Skip it in that specific case; it runs normally on
+  # a real apply, and still previews accurately in --check once the data
+  # directory already exists from a prior real run.
+  when: not ansible_check_mode or log_db_pgdata.stat.exists
+
+- name: Manage pg_hba.conf entries for the writer/reader roles
+  ansible.builtin.blockinfile:
+    path: /var/lib/pgsql/data/pg_hba.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - log_db_pg_hba_extra"
+    block: "{{ log_db_pg_hba_extra | join('\n') }}"
+    # PostgreSQL uses the FIRST matching pg_hba.conf line, not the most
+    # specific one. RHEL's default file ships broad catch-all rules such
+    # as "host all all 127.0.0.1/32 ident" near the top, which would
+    # otherwise always match before our narrower scram-sha-256 rules if
+    # they were simply appended (blockinfile's default). Insert this
+    # block at the very top of the file instead, so our per-user,
+    # per-database rules are evaluated first.
+    insertbefore: BOF
+  become: true
+  notify: Restart postgresql
+  when: not ansible_check_mode or log_db_pgdata.stat.exists
+
+- name: Ensure PostgreSQL is enabled and running
+  ansible.builtin.systemd:
+    name: postgresql
+    state: started
+    enabled: true
+  become: true
+
+- name: Apply any pending PostgreSQL config changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Create the log database
+  community.postgresql.postgresql_db:
+    name: "{{ log_db_name }}"
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Enable the pg_trgm extension (fast substring/pattern search)
+  community.postgresql.postgresql_ext:
+    name: pg_trgm
+    login_db: "{{ log_db_name }}"
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Create the log messages table
+  community.postgresql.postgresql_query:
+    login_db: "{{ log_db_name }}"
+    query: >
+      CREATE TABLE IF NOT EXISTS {{ log_db_table }} (
+      id BIGSERIAL PRIMARY KEY,
+      message TEXT,
+      facility SMALLINT,
+      fromhost VARCHAR(60),
+      priority SMALLINT,
+      devicereportedtime TIMESTAMP,
+      receivedat TIMESTAMP,
+      syslogtag VARCHAR(60)
+      )
+  become: true
+  become_user: postgres
+
+- name: Create supporting indexes for search
+  community.postgresql.postgresql_query:
+    login_db: "{{ log_db_name }}"
+    query: "{{ item }}"
+  loop:
+    - "CREATE INDEX IF NOT EXISTS idx_{{ log_db_table }}_message_trgm ON {{ log_db_table }} USING gin (message gin_trgm_ops)"
+    - "CREATE INDEX IF NOT EXISTS idx_{{ log_db_table }}_fromhost ON {{ log_db_table }} (fromhost)"
+    - "CREATE INDEX IF NOT EXISTS idx_{{ log_db_table }}_receivedat ON {{ log_db_table }} (receivedat)"
+    - "CREATE INDEX IF NOT EXISTS idx_{{ log_db_table }}_syslogtag ON {{ log_db_table }} (syslogtag)"
+  become: true
+  become_user: postgres
+  loop_control:
+    label: "{{ item }}"
+
+- name: Create the rsyslog writer role
+  community.postgresql.postgresql_user:
+    name: "{{ log_db_writer_user }}"
+    password: "{{ log_db_writer_password }}"
+    encrypted: true
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Grant the writer role INSERT-only privileges on the log table
+  community.postgresql.postgresql_privs:
+    login_db: "{{ log_db_name }}"
+    role: "{{ log_db_writer_user }}"
+    type: table
+    objs: "{{ log_db_table }}"
+    privs: INSERT
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Grant the writer role USAGE on the id sequence
+  community.postgresql.postgresql_privs:
+    login_db: "{{ log_db_name }}"
+    role: "{{ log_db_writer_user }}"
+    type: sequence
+    objs: "{{ log_db_table }}_id_seq"
+    privs: USAGE,SELECT
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Create the read-only search UI role
+  community.postgresql.postgresql_user:
+    name: "{{ log_db_reader_user }}"
+    password: "{{ log_db_reader_password }}"
+    encrypted: true
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Grant the reader role SELECT-only privileges on the log table
+  community.postgresql.postgresql_privs:
+    login_db: "{{ log_db_name }}"
+    role: "{{ log_db_reader_user }}"
+    type: table
+    objs: "{{ log_db_table }}"
+    privs: SELECT
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Create the suppressed-patterns table (Insights "Dismiss" feature)
+  community.postgresql.postgresql_query:
+    login_db: "{{ log_db_name }}"
+    query: >
+      CREATE TABLE IF NOT EXISTS {{ log_db_suppressed_patterns_table }} (
+      id BIGSERIAL PRIMARY KEY,
+      service VARCHAR(120) NOT NULL,
+      pattern TEXT NOT NULL,
+      note TEXT,
+      suppressed_by VARCHAR(120),
+      suppressed_at TIMESTAMP DEFAULT now(),
+      UNIQUE (service, pattern)
+      )
+  become: true
+  become_user: postgres
+
+# Deliberately NOT the same grant as the main log table above: the
+# reader role only ever has SELECT there. This suppression table is
+# small, holds no log content (only the reviewer's own
+# service/pattern/note choices), and the Insights "Dismiss"/
+# "Un-suppress" actions need to write and delete rows in it - so it
+# gets its own narrow INSERT/SELECT/UPDATE/DELETE grant, scoped to
+# this one table only, keeping the main log table's SELECT-only
+# privilege unchanged (least privilege).
+- name: Grant reader INSERT/SELECT/UPDATE/DELETE on suppressed-patterns
+  community.postgresql.postgresql_privs:
+    login_db: "{{ log_db_name }}"
+    role: "{{ log_db_reader_user }}"
+    type: table
+    objs: "{{ log_db_suppressed_patterns_table }}"
+    # UPDATE is required in addition to INSERT/SELECT/DELETE because
+    # suppress_pattern() uses INSERT ... ON CONFLICT (service, pattern) DO
+    # UPDATE SET ... - Postgres checks UPDATE privilege on the target
+    # table for the whole statement whenever a DO UPDATE clause is
+    # present, even on rows that insert cleanly with zero actual
+    # conflicts. Without it every suppress/dismiss action fails with
+    # "permission denied for table ..." regardless of check-mode output.
+    privs: INSERT,SELECT,UPDATE,DELETE
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Grant the reader role USAGE on the suppressed-patterns id sequence
+  community.postgresql.postgresql_privs:
+    login_db: "{{ log_db_name }}"
+    role: "{{ log_db_reader_user }}"
+    type: sequence
+    objs: "{{ log_db_suppressed_patterns_table }}_id_seq"
+    privs: USAGE,SELECT
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Deploy the retention cleanup script
+  ansible.builtin.template:
+    src: retention_cleanup.sh.j2
+    dest: /usr/local/sbin/log_db_retention_cleanup.sh
+    owner: root
+    group: postgres
+    mode: "0750"
+  become: true
+  when: log_db_retention_cleanup_enabled | bool
+
+- name: Deploy the retention cleanup systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/log-db-retention-cleanup.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Delete log_db rows older than the retention window
+
+      [Service]
+      Type=oneshot
+      User=postgres
+      ExecStart=/usr/local/sbin/log_db_retention_cleanup.sh
+  become: true
+  when: log_db_retention_cleanup_enabled | bool
+  notify: Reload systemd
+
+- name: Deploy the retention cleanup systemd timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/log-db-retention-cleanup.timer
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Daily log_db retention cleanup
+
+      [Timer]
+      OnCalendar=daily
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  become: true
+  when: log_db_retention_cleanup_enabled | bool
+  notify: Reload systemd
+
+- name: Apply systemd unit changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the retention cleanup timer
+  ansible.builtin.systemd:
+    name: log-db-retention-cleanup.timer
+    state: started
+    enabled: true
+  become: true
+  when: log_db_retention_cleanup_enabled | bool

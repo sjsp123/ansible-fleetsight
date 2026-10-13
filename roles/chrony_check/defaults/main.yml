@@ -1,0 +1,29 @@
+---
+# roles/chrony_check/defaults/main.yml
+#
+# Local, per-host NTP/chrony health checking. Deployed to every
+# [log_clients] host (including the collector itself, which is also a
+# log_clients member) via playbooks/centralized_logging.yml. Logs one
+# syslog message per breach - it never emails anything itself.
+# roles/chrony_watcher (collector only) polls log_db for these
+# messages and sends the actual alert email - see that role's
+# README.md.
+
+# Opt-in, matching the pattern used by roles/disk_space_check,
+# roles/service_failure_watcher, etc: this role's own default is
+# false; group_vars/all/chrony_check.yml flips it on fleet-wide by
+# default in this repo.
+chrony_check_enabled: false
+
+# Check cadence. NTP/chrony drift is normally a slow-moving condition
+# (not a sudden crash or a host going unreachable), so this defaults
+# to a longer interval, matching roles/disk_space_check's own
+# 300s/5min reasoning but a little longer still - 900s/15min.
+chrony_check_poll_interval_seconds: 900
+
+# Unprivileged system account the timer/service runs as. Reading NTP/
+# chrony status via timedatectl/systemctl/chronyc needs no elevated
+# privilege.
+chrony_check_user: chrony_chk
+
+chrony_check_app_dir: /opt/chrony_check

@@ -1,0 +1,18 @@
+# Managed by Ansible (roles/idm_healthcheck_watcher) - do not edit by hand.
+# Kept as a separate settings module from idm_healthcheck_watcher.py
+# itself, same reasoning as roles/disk_space_watcher's config.py.j2
+# split.
+
+DB_HOST = "{{ idm_healthcheck_watcher_db_host }}"
+DB_NAME = "{{ idm_healthcheck_watcher_db_name }}"
+DB_TABLE = "{{ idm_healthcheck_watcher_db_table }}"
+DB_USER = "{{ idm_healthcheck_watcher_db_user }}"
+DB_PASSWORD = "{{ idm_healthcheck_watcher_db_password }}"
+
+MAX_ROWS_PER_EMAIL = {{ idm_healthcheck_watcher_max_rows_per_email }}
+STATE_FILE = "{{ idm_healthcheck_watcher_state_file }}"
+
+EMAIL_TO = {{ idm_healthcheck_watcher_email_to | to_json }}
+EMAIL_FROM = "{{ idm_healthcheck_watcher_email_from }}"
+SMTP_HOST = "{{ idm_healthcheck_watcher_smtp_host }}"
+SMTP_PORT = {{ idm_healthcheck_watcher_smtp_port }}

@@ -1,0 +1,20 @@
+---
+# Ansible collection dependencies for this repository.
+#
+# Install with:
+#   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: ansible.posix
+    version: ">=1.5.0"
+  - name: community.postgresql
+    version: ">=3.0.0"
+
+# redhat.rhel_system_roles is NOT listed above - it isn't on public
+# galaxy.ansible.com at all (confirmed: the API returns zero results for
+# the redhat namespace, and `ansible-galaxy collection download` fails
+# with a dependency-resolution error). It's distributed two other ways:
+# as the `rhel-system-roles` RPM in every RHEL 8/9/10 AppStream repo, or
+# via Red Hat Automation Hub (needs a separate Hub token/subscription).
+# This repo uses the RPM path - see rhel_system_roles/README.md "Installing
+# the collection". Required for playbooks/deploy_timesync_role.yml,
+# which deploys chrony/NTP fleet-wide.

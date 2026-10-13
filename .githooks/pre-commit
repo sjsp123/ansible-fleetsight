@@ -1,0 +1,61 @@
+#!/bin/sh
+#
+# Pre-commit: keep the pre-rendered guide honest.
+#
+# /guide on the dashboard serves roles/linuxdb_dashboard/files/
+# guide_content.html, which docs/render_guide.py generates from
+# OPERATIONAL_SUPPORT_GUIDE.md. Nothing else checks that the committed
+# HTML is in sync with the markdown, so a .md edit without a re-render
+# silently ships a stale guide. This hook re-renders and fails the
+# commit when the output differs from what's staged.
+#
+# The rendered page carries a build-time timestamp in its footer, so a
+# content-identical re-render still differs byte-for-byte from the
+# committed file. The comparison therefore strips the footer line
+# first: only differences OUTSIDE it mean the committed HTML was stale.
+# A timestamp-only difference is discarded (the committed file is
+# restored) so the working tree doesn't get churned by re-renders that
+# changed nothing.
+#
+# One-time setup per clone (activates this directory as the hook path):
+#     git config core.hooksPath .githooks
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+if [ -x /tmp/render_guide_venv/bin/python3 ]; then
+    PY=/tmp/render_guide_venv/bin/python3
+else
+    PY=python3
+fi
+
+"$PY" docs/render_guide.py || {
+    echo >&2
+    echo "pre-commit: could not re-render the operational guide (see error above)." >&2
+    echo "If the 'markdown' package is missing, set the renderer venv up once with:" >&2
+    echo "    python3 -m venv /tmp/render_guide_venv" >&2
+    echo "    /tmp/render_guide_venv/bin/pip install markdown" >&2
+    exit 1
+}
+
+GUIDE=roles/linuxdb_dashboard/files/guide_content.html
+STRIP='class="guide-footer"'
+
+# Committed (staged) version, footer line stripped.
+git show ":$GUIDE" 2>/dev/null | grep -v "$STRIP" > .githooks/.committed_guide || true
+# Freshly re-rendered version, footer line stripped.
+grep -v "$STRIP" "$GUIDE" > .githooks/.fresh_guide
+
+if ! cmp -s .githooks/.committed_guide .githooks/.fresh_guide; then
+    rm -f .githooks/.committed_guide .githooks/.fresh_guide
+    echo >&2
+    echo "pre-commit: roles/linuxdb_dashboard/files/guide_content.html was out of" >&2
+    echo "sync with OPERATIONAL_SUPPORT_GUIDE.md and has just been regenerated." >&2
+    echo "Stage the regenerated file and commit again:" >&2
+    echo "    git add $GUIDE" >&2
+    exit 1
+fi
+rm -f .githooks/.committed_guide .githooks/.fresh_guide
+
+# Content matched - only the build timestamp differed. Restore the
+# committed file so the timestamp churn doesn't dirty the commit.
+git checkout -q -- "$GUIDE" 2>/dev/null || true

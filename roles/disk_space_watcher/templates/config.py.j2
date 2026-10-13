@@ -1,0 +1,18 @@
+# Managed by Ansible (roles/disk_space_watcher) - do not edit by hand.
+# Kept as a separate settings module from disk_space_watcher.py
+# itself, same reasoning as roles/service_failure_watcher's
+# config.py.j2 split.
+
+DB_HOST = "{{ disk_space_watcher_db_host }}"
+DB_NAME = "{{ disk_space_watcher_db_name }}"
+DB_TABLE = "{{ disk_space_watcher_db_table }}"
+DB_USER = "{{ disk_space_watcher_db_user }}"
+DB_PASSWORD = "{{ disk_space_watcher_db_password }}"
+
+MAX_ROWS_PER_EMAIL = {{ disk_space_watcher_max_rows_per_email }}
+STATE_FILE = "{{ disk_space_watcher_state_file }}"
+
+EMAIL_TO = {{ disk_space_watcher_email_to | to_json }}
+EMAIL_FROM = "{{ disk_space_watcher_email_from }}"
+SMTP_HOST = "{{ disk_space_watcher_smtp_host }}"
+SMTP_PORT = {{ disk_space_watcher_smtp_port }}

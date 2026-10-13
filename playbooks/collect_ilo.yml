@@ -1,0 +1,228 @@
+---
+- name: Collect HPE Firmware Inventory
+  # Define an [hpe_ilo_hosts] group in your inventory listing your HPE
+  # ProLiant/rack servers (see inventory.example.ini). Override with
+  # --limit if you only want to run this against one host.
+  hosts: hpe_ilo_hosts
+  become: true
+  gather_facts: false
+
+  vars:
+    report_file: "/var/tmp/hpe_firmware_inventory.csv"
+
+  tasks:
+
+    #####################################################################
+    # Basic Information
+    #####################################################################
+
+    - name: Get hostid
+      command: hostid
+      register: hostid_out
+      changed_when: false
+      failed_when: false
+
+    - name: Get chassis serial
+      shell: |
+        ipmitool fru print | awk -F': ' '/Chassis Serial/&&!x{print $2;x=1}'
+      register: serial_out
+      changed_when: false
+      failed_when: false
+
+    - name: Get model
+      shell: |
+        ipmitool fru print | awk -F': ' '/Board Product/&&!x{print $2;x=1}'
+      register: model_out
+      changed_when: false
+      failed_when: false
+
+    - name: Get iLO IP
+      shell: |
+        ipmitool lan print | awk -F': ' '/^IP Address[[:space:]]*:/ {print $2;exit}'
+      register: ip_out
+      changed_when: false
+      failed_when: false
+
+    #####################################################################
+    # BIOS Information
+    #####################################################################
+
+    - name: Extract BIOS version
+      shell: |
+        ilorest serverinfo 2>/dev/null | \
+        sed -n 's/^Bios Version: \(.*\) (\(.*\))/\1/p'
+      register: bios_version_out
+      changed_when: false
+      failed_when: false
+
+    - name: Extract BIOS date
+      shell: |
+        ilorest serverinfo 2>/dev/null | \
+        sed -n 's/^Bios Version: .* (\(.*\))/\1/p'
+      register: bios_date_out
+      changed_when: false
+      failed_when: false
+
+    #####################################################################
+    # iLO Information
+    #####################################################################
+
+    - name: Extract iLO version
+      shell: |
+        ilorest serverinfo 2>/dev/null | \
+        awk -F': ' '/^iLO [0-9]+ :/ {print $2}' | awk '{print $1}'
+      register: ilo_version_out
+      changed_when: false
+      failed_when: false
+
+    - name: Extract iLO release date
+      shell: |
+        ilorest serverinfo 2>/dev/null | \
+        awk -F': ' '/^iLO [0-9]+ :/ {print $2}' | cut -d' ' -f2-
+      register: ilo_date_out
+      changed_when: false
+      failed_when: false
+
+    #####################################################################
+    # Smart Array / SR Controllers
+    #####################################################################
+
+    - name: Get SmartArray controller model
+      shell: |
+        ssacli ctrl all show detail 2>/dev/null | \
+        awk -F' in Slot' '/^HPE / {print $1;exit}'
+      register: ssacli_model
+      changed_when: false
+      failed_when: false
+
+    - name: Get SmartArray controller firmware
+      shell: |
+        ssacli ctrl all show detail 2>/dev/null | \
+        awk -F': ' '/Firmware Version/ {print $2;exit}'
+      register: ssacli_fw
+      changed_when: false
+      failed_when: false
+
+    #####################################################################
+    # MegaRAID Controllers (MR416i-p)
+    #####################################################################
+
+    - name: Get MegaRAID controller info from iLOREST
+      shell: |
+        ilorest serverinfo 2>/dev/null | \
+        grep -E '^HPE MR[0-9]'
+      register: mr_info
+      changed_when: false
+      failed_when: false
+
+    #####################################################################
+    # Controller Facts
+    #####################################################################
+
+    - name: Set controller facts
+      set_fact:
+        controller_type: >-
+          {% if ssacli_model.stdout | trim != '' %}
+          SmartArray
+          {% elif mr_info.stdout | trim != '' %}
+          MegaRAID
+          {% else %}
+          Unknown
+          {% endif %}
+        controller_model: >-
+          {% if ssacli_model.stdout | trim != '' %}
+          {{ ssacli_model.stdout | trim }}
+          {% elif mr_info.stdout | trim != '' %}
+          {{ mr_info.stdout | regex_replace(':.*$','') | trim }}
+          {% else %}
+          NA
+          {% endif %}
+        controller_fw: >-
+          {% if ssacli_fw.stdout | trim != '' %}
+          {{ ssacli_fw.stdout | trim }}
+          {% elif mr_info.stdout | trim != '' %}
+          {{ mr_info.stdout | regex_replace('^.*: ','') | trim }}
+          {% else %}
+          NA
+          {% endif %}
+
+    #####################################################################
+    # RPM Versions
+    #####################################################################
+
+    - name: Check AMSD RPM
+      shell: rpm -q --qf '%{VERSION}-%{RELEASE}' amsd
+      register: amsd_rpm
+      changed_when: false
+      failed_when: false
+
+    - name: Check iLOREST RPM
+      shell: rpm -q --qf '%{VERSION}-%{RELEASE}' ilorest
+      register: ilorest_rpm
+      changed_when: false
+      failed_when: false
+
+    - name: Check SSACLI RPM
+      shell: rpm -q --qf '%{VERSION}-%{RELEASE}' ssacli
+      register: ssacli_rpm
+      changed_when: false
+      failed_when: false
+
+    - name: Check STORCLI RPM
+      shell: rpm -q --qf '%{VERSION}-%{RELEASE}' storcli
+      register: storcli_rpm
+      changed_when: false
+      failed_when: false
+
+    - name: Set RPM facts
+      set_fact:
+        amsd_status: "{{ amsd_rpm.stdout if amsd_rpm.rc == 0 else 'MISSING' }}"
+        ilorest_status: "{{ ilorest_rpm.stdout if ilorest_rpm.rc == 0 else 'MISSING' }}"
+        ssacli_status: "{{ ssacli_rpm.stdout if ssacli_rpm.rc == 0 else 'NA' }}"
+        storcli_status: "{{ storcli_rpm.stdout if storcli_rpm.rc == 0 else 'NA' }}"
+
+    #####################################################################
+    # Build Host Record
+    #####################################################################
+
+    - name: Build host record
+      set_fact:
+        host_record:
+          hostname: "{{ inventory_hostname }}"
+          hostid: "{{ hostid_out.stdout | trim }}"
+          model: "{{ model_out.stdout | trim }}"
+          serial: "{{ serial_out.stdout | trim }}"
+          ilo_ip: "{{ ip_out.stdout | trim }}"
+          ilo_version: "{{ ilo_version_out.stdout | trim }}"
+          ilo_date: "{{ ilo_date_out.stdout | trim }}"
+          bios_version: "{{ bios_version_out.stdout | trim }}"
+          bios_date: "{{ bios_date_out.stdout | trim }}"
+          controller_type: "{{ controller_type | trim }}"
+          controller_model: "{{ controller_model | trim }}"
+          controller_fw: "{{ controller_fw | trim }}"
+          amsd: "{{ amsd_status }}"
+          ilorest: "{{ ilorest_status }}"
+          ssacli: "{{ ssacli_status }}"
+          storcli: "{{ storcli_status }}"
+
+    #####################################################################
+    # Create CSV Report
+    #####################################################################
+
+    - name: Generate CSV report
+      run_once: true
+      delegate_to: localhost
+      copy:
+        dest: "{{ report_file }}"
+        mode: "0644"
+        content: |
+          Hostname|HostID|Model|Serial|ILO_IP|ILO_VERSION|ILO_DATE|BIOS_VERSION|BIOS_DATE|CONTROLLER_TYPE|CONTROLLER_MODEL|CONTROLLER_FW|AMSD|ILOREST|SSACLI|STORCLI
+          {% for host in ansible_play_hosts %}
+          {{ hostvars[host].host_record.hostname }}|{{ hostvars[host].host_record.hostid }}|{{ hostvars[host].host_record.model }}|{{ hostvars[host].host_record.serial }}|{{ hostvars[host].host_record.ilo_ip }}|{{ hostvars[host].host_record.ilo_version }}|{{ hostvars[host].host_record.ilo_date }}|{{ hostvars[host].host_record.bios_version }}|{{ hostvars[host].host_record.bios_date }}|{{ hostvars[host].host_record.controller_type }}|{{ hostvars[host].host_record.controller_model }}|{{ hostvars[host].host_record.controller_fw }}|{{ hostvars[host].host_record.amsd }}|{{ hostvars[host].host_record.ilorest }}|{{ hostvars[host].host_record.ssacli }}|{{ hostvars[host].host_record.storcli }}
+          {% endfor %}
+
+    - name: Show report location
+      run_once: true
+      delegate_to: localhost
+      debug:
+        msg: "Inventory written to {{ report_file }}"

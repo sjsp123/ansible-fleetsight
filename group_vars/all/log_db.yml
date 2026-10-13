@@ -1,0 +1,71 @@
+---
+# group_vars/all/log_db.yml
+# Fleet-wide overrides for roles/log_db, roles/rsyslog_collector's database
+# output, and roles/log_search_ui (see each role's defaults for the full
+# list of variables and comments). Uncomment/edit as needed — this follows
+# the same pattern as group_vars/all/host_checks.yml.
+
+# Opt-in toggles - all default to false/off in playbooks/centralized_logging.yml.
+log_db_enabled: true
+rsyslog_collector_db_enabled: true
+log_search_ui_enabled: true
+log_alerter_enabled: false
+
+# RHEL 8 only - override which legacy dnf module stream to enable before
+# install (ignored on RHEL 9/10, which aren't modular). See
+# roles/log_db/README.md "RHEL 8/9/10 differences" and run
+# `dnf module list postgresql` on the target host first.
+# log_db_postgresql_stream: "15"
+
+# log_db_name: syslog
+# log_db_table: systemevents
+# log_db_retention_days: 90
+# log_db_retention_cleanup_enabled: true
+
+# IMPORTANT: the passwords below are placeholders shipped in
+# roles/log_db/defaults/main.yml - CHANGE THEM before enabling this
+# outside a throwaway lab. Do not put real passwords in this file if it
+# is committed to git - instead put real values in an ansible-vault
+# encrypted file, e.g.:
+#   ansible-vault create group_vars/all/log_db_secrets.yml
+# containing:
+#   log_db_writer_password: "<a real secret>"
+#   log_db_reader_password: "<a different real secret>"
+# then run playbooks with --ask-vault-pass (or a vault password file).
+# log_db_writer_user: rsyslog
+# log_db_writer_password: CHANGE_ME_rsyslog_writer
+# log_db_reader_user: log_search
+# log_db_reader_password: CHANGE_ME_log_search_reader
+
+# log_search_ui_port: 8081
+# log_search_ui_max_results: 500
+
+# Guide cross-link - shows a "Guide" tab in the Log Search / Insights
+# switcher pointing at the Operational Support Guide, hosted at /guide on
+# the LinuxDB Dashboard (same control node, different port). See
+# roles/log_search_ui/defaults/main.yml for the full explanation.
+log_search_ui_guide_app_url: "{{ 'https' if linuxdb_dashboard_tls_enabled | default(true) else 'http' }}://{{ ansible_fqdn | default(ansible_hostname) }}:{{ linuxdb_dashboard_port | default(8082) }}/guide"
+
+# Sibling-app cross-link - shows a "LinuxDB Dashboard" tab in the Log
+# Search / Insights switcher (alongside the Package Search and Guide
+# tabs above/below), so every Log Search page can jump straight to the
+# LinuxDB Dashboard and vice versa. See roles/log_search_ui/defaults/main.yml
+# for the full explanation.
+log_search_ui_sibling_app_name: "LinuxDB Dashboard"
+log_search_ui_sibling_app_url: "{{ 'https' if linuxdb_dashboard_tls_enabled | default(true) else 'http' }}://{{ ansible_fqdn | default(ansible_hostname) }}:{{ linuxdb_dashboard_port | default(8082) }}/"
+
+# Package Search cross-link - shows a "Package Search" tab in the Log
+# Search / Insights switcher pointing at the fleet-wide installed-package
+# search, hosted at /packages on the LinuxDB Dashboard (same control
+# node, different port). See roles/log_search_ui/defaults/main.yml for
+# the full explanation.
+log_search_ui_packages_app_url: "{{ 'https' if linuxdb_dashboard_tls_enabled | default(true) else 'http' }}://{{ ansible_fqdn | default(ansible_hostname) }}:{{ linuxdb_dashboard_port | default(8082) }}/packages"
+
+# log_alerter_severity_threshold: 4
+# log_alerter_poll_interval_seconds: 60
+# log_alerter_email_to: root
+# See roles/log_alerter/README.md "Choosing the threshold" before
+# lowering log_alerter_severity_threshold's number (i.e. making it more
+# selective) - it must stay numerically >= rsyslog_collector_db_min_
+# severity above, or you'll silently miss alerts for severities that
+# were never even written to the database in the first place.

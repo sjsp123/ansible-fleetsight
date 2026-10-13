@@ -1,0 +1,10 @@
+---
+# Toggle the sedispatch plugin fix (KB 2762771).
+silence_setroubleshoot_disable_sedispatch: true
+
+# Set SELinux to permissive at runtime (setenforce 0) AND persist across
+# reboots (SELINUX=permissive in /etc/selinux/config). No reboot required.
+# AVC denials continue to be logged for forensics; they are just no longer
+# enforced. This is the correct mode for a PoC where you want visibility
+# but not enforcement.
+silence_setroubleshoot_set_permissive: true

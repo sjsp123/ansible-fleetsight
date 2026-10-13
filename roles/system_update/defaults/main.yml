@@ -1,0 +1,29 @@
+---
+# roles/system_update/defaults/main.yml
+# Overridable in group_vars/all/system_update.yml or with -e on the CLI.
+
+# Set false to patch without ever rebooting (e.g. to stage kernels for a
+# separate maintenance window).
+system_update_reboot_enabled: true
+
+# Only install security errata (RHEL w/ subscription-manager). Leave false
+# for a full dnf/yum update -y equivalent.
+system_update_security_only: false
+
+# Remove packages that are no longer required after the upgrade
+# (equivalent to `dnf autoremove`).
+system_update_autoremove: false
+
+# Packages to hold back, e.g. ["kernel*", "docker-ce"]
+system_update_exclude: []
+
+# How long metadata is considered fresh before a forced refresh (seconds).
+# Only used as informational value; we always refresh explicitly below.
+system_update_cache_valid_time: 3600
+
+# reboot module tuning
+system_update_reboot_timeout: 600
+system_update_reboot_pre_delay: 5
+system_update_reboot_post_delay: 30
+system_update_reboot_connect_timeout: 5
+system_update_test_command: uptime

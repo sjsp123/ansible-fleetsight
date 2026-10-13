@@ -1,0 +1,105 @@
+---
+# playbooks/service_failure_alert.yml
+#
+# RETIRED - see roles/service_failure_watcher/README.md and root
+# README.md "Alerting" for the centralized replacement
+# (playbooks/centralized_logging.yml's service_failure_watcher play,
+# log_collector-only, no per-host mail relay needed).
+# service_failure_alert_enabled now defaults to false (see
+# group_vars/all/service_failure_alert.yml) - a normal run of this
+# playbook now TEARS DOWN any already-deployed drop-ins/script/unit
+# instead of deploying them, so it is still safe (and useful) to run
+# against hosts that had the old mechanism deployed. The role code
+# itself is kept in the repo, not deleted, in case a future need for a
+# per-host, no-log-pipeline-dependency alert reappears.
+#
+# Real-time alerting the instant a covered systemd unit fails - see
+# roles/service_failure_alert/README.md for the full mechanism
+# (systemd's own OnFailure=), what's covered by default (chronyd on
+# every host, rsm222/rsm232 on hosts already in rsm222_hosts/
+# rsm232_hosts), and what isn't (FLEXLM - not a systemd unit).
+#
+# Inventory: runs against [log_clients] - the same "every managed
+# host" group playbooks/centralized_logging.yml's client role and
+# hostinfo already use. Nothing here is specific to logging; it just
+# reuses that existing group rather than inventing a new one.
+#
+# Requirements: none beyond this repo's base requirements.yml.
+#
+# Usage:
+#   ansible-playbook playbooks/service_failure_alert.yml
+#
+#   # Re-enable the old per-host mechanism instead of tearing it down:
+#   ansible-playbook playbooks/service_failure_alert.yml -e service_failure_alert_enabled=true
+#
+#   # Add more units fleet-wide without editing the role (only takes
+#   # effect while re-enabled):
+#   ansible-playbook playbooks/service_failure_alert.yml \
+#     -e '{"service_failure_alert_enabled": true, "service_failure_alert_extra_units": ["sshd.service", "crond.service"]}'
+
+- name: Configure real-time systemd unit failure alerting
+  hosts: log_clients
+  gather_facts: true
+  become: true
+  tags:
+    - service_failure_alert
+
+  roles:
+    - role: service_failure_alert
+      when: service_failure_alert_enabled | default(false) | bool
+
+  tasks:
+    - name: Build the list of systemd units that would be covered on this host
+      ansible.builtin.set_fact:
+        service_failure_alert_units: >-
+          {{
+            (service_failure_alert_always_units
+             + service_failure_alert_extra_units
+             + (['rsm222.service'] if inventory_hostname in (rsm222_hosts | default([])) else [])
+             + (['rsm232.service'] if inventory_hostname in (rsm232_hosts | default([])) else []))
+            | unique
+          }}
+      when: not (service_failure_alert_enabled | default(false) | bool)
+
+    - name: Remove the OnFailure= drop-in from each unit now that alerting is retired
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}.d/service-failure-alert.conf"
+        state: absent
+      loop: "{{ service_failure_alert_units }}"
+      when: not (service_failure_alert_enabled | default(false) | bool)
+      notify: Reload systemd
+
+    - name: Check whether the service-failure-alert@ template unit exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/service-failure-alert@.service
+      register: service_failure_alert_template_unit
+      when: not (service_failure_alert_enabled | default(false) | bool)
+
+    - name: Remove the service-failure-alert@.service template unit now that alerting is retired
+      ansible.builtin.file:
+        path: /etc/systemd/system/service-failure-alert@.service
+        state: absent
+      when:
+        - not (service_failure_alert_enabled | default(false) | bool)
+        - service_failure_alert_template_unit.stat.exists | default(false)
+      notify: Reload systemd
+
+    - name: Check whether the deployed alert script exists
+      ansible.builtin.stat:
+        path: "{{ service_failure_alert_script_path }}"
+      register: service_failure_alert_script_stat
+      when: not (service_failure_alert_enabled | default(false) | bool)
+
+    - name: Remove the deployed alert script now that alerting is retired
+      ansible.builtin.file:
+        path: "{{ service_failure_alert_script_path }}"
+        state: absent
+      when:
+        - not (service_failure_alert_enabled | default(false) | bool)
+        - service_failure_alert_script_stat.stat.exists | default(false)
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      become: true

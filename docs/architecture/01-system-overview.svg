@@ -1,0 +1,73 @@
+<svg viewBox="0 0 720 350" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>ansible_operations work-repo architecture: log clients and IdM feed a single Log Collector host, which serves dashboards to browsers and email alerts via Postfix.</title>
+<desc>Five zones: Log Clients (fleet), IdM Realm, Log Collector (core, single host), Browsers, and Email Alerts, connected by TCP syslog forwarding, polling, HTTP(S), and SMTP.</desc>
+<rect width="100%" height="100%" fill="#F7F6F2"/>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="#B9B6AE" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<rect x="20" y="30" width="140" height="140" rx="6" fill="#F9F8F5" stroke="#D4D1CA" stroke-width="0.5"/>
+<rect x="20" y="190" width="140" height="140" rx="6" fill="#F9F8F5" stroke="#D4D1CA" stroke-width="0.5"/>
+<rect x="220" y="30" width="280" height="300" rx="6" fill="#EFF7F7" stroke="#01696F" stroke-width="0.75"/>
+<rect x="560" y="30" width="140" height="140" rx="6" fill="#F9F8F5" stroke="#D4D1CA" stroke-width="0.5"/>
+<rect x="560" y="190" width="140" height="140" rx="6" fill="#F9F8F5" stroke="#D4D1CA" stroke-width="0.5"/>
+
+<line x1="160" y1="100" x2="216" y2="100" stroke="#B9B6AE" stroke-width="1" marker-end="url(#arrow)"/>
+<line x1="160" y1="260" x2="216" y2="260" stroke="#B9B6AE" stroke-width="1" marker-end="url(#arrow)"/>
+<line x1="504" y1="100" x2="556" y2="100" stroke="#B9B6AE" stroke-width="1" marker-end="url(#arrow)"/>
+<line x1="504" y1="260" x2="556" y2="260" stroke="#B9B6AE" stroke-width="1" marker-end="url(#arrow)"/>
+<line x1="240" y1="84" x2="480" y2="84" stroke="#E4E2DC" stroke-width="0.5"/>
+<line x1="240" y1="188" x2="480" y2="188" stroke="#E4E2DC" stroke-width="0.5"/>
+
+<text x="190" y="94" text-anchor="middle" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">TCP 6514</text>
+<text x="190" y="254" text-anchor="middle" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">logs+poll</text>
+<text x="530" y="94" text-anchor="middle" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">HTTP(S)</text>
+<text x="530" y="254" text-anchor="middle" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">SMTP</text>
+
+<text x="90" y="52" text-anchor="middle" font-size="14" font-weight="600" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">Log Clients</text>
+<text x="90" y="68" text-anchor="middle" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">(fleet hosts)</text>
+<text x="32" y="86" font-size="10" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">rsyslog_client</text>
+<text x="32" y="99" font-size="10" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">disk_space_check</text>
+<text x="32" y="112" font-size="10" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">chrony_check</text>
+<text x="32" y="125" font-size="10" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">linuxdb_reports</text>
+<text x="32" y="138" font-size="10" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">config_snapshot</text>
+<text x="32" y="151" font-size="10" fill="#28251D" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">hostinfo</text>
+
+<text x="90" y="212" text-anchor="middle" font-size="14" font-weight="600" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">IdM Realm</text>
+<text x="90" y="228" text-anchor="middle" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">(FreeIPA hosts)</text>
+<text x="32" y="246" font-size="10" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">IdM health check</text>
+<text x="32" y="259" font-size="10" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">role (local)</text>
+<text x="32" y="278" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">Also a log_client</text>
+<text x="32" y="291" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">(forwards logs)</text>
+
+<text x="360" y="54" text-anchor="middle" font-size="16" font-weight="600" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">Log Collector</text>
+<text x="360" y="72" text-anchor="middle" font-size="11" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">single host per environment</text>
+
+<text x="360" y="104" text-anchor="middle" font-size="12" font-weight="600" fill="#01696F" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">Centralized Logging</text>
+<text x="240" y="122" font-size="12" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">PostgreSQL log_db</text>
+<text x="240" y="138" font-size="12" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">log_search_ui :8081</text>
+<text x="240" y="154" font-size="12" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">-> browser (search)</text>
+<text x="240" y="170" font-size="12" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">6 watcher/alerter svcs</text>
+
+<text x="360" y="200" text-anchor="middle" font-size="12" font-weight="600" fill="#01696F" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">LinuxDB Dashboard</text>
+<text x="240" y="218" font-size="12" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">hostinfo + reports</text>
+<text x="240" y="234" font-size="12" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">+ config_snapshot</text>
+<text x="240" y="250" font-size="12" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">linuxdb_dashboard :8082</text>
+<text x="240" y="266" font-size="12" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">-> browser (reports)</text>
+
+<text x="360" y="292" text-anchor="middle" font-size="11" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">(control node = this host)</text>
+
+<text x="630" y="52" text-anchor="middle" font-size="14" font-weight="600" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">Browsers</text>
+<text x="630" y="68" text-anchor="middle" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">(dashboards)</text>
+<text x="572" y="90" font-size="10" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">Log Search :8081</text>
+<text x="572" y="104" font-size="10" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">Dashboard :8082</text>
+<text x="572" y="122" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">Basic-Auth today</text>
+<text x="572" y="136" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">(Kerberos soon)</text>
+
+<text x="630" y="212" text-anchor="middle" font-size="14" font-weight="600" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">Email Alerts</text>
+<text x="630" y="228" text-anchor="middle" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">(via Postfix)</text>
+<text x="572" y="250" font-size="10" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">6 watcher/alerter</text>
+<text x="572" y="264" font-size="10" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">roles (see below)</text>
+</svg>

@@ -1,0 +1,20 @@
+{{ (['HOSTNAME', 'FQDN', 'IP', 'OS'] + (host_checks | map(attribute='header') | list)) | join('|') }}
+{% for host in ansible_play_hosts_all %}
+{% if hostvars[host].host_report is defined %}
+{{ ([hostvars[host].host_report.hostname, hostvars[host].host_report.fqdn, hostvars[host].host_report.ip, hostvars[host].host_report.os] + (host_checks | map(attribute='key') | map('extract', hostvars[host].host_report) | map('default', '', true) | list)) | join('|') }}
+{% else %}
+{{ ([host] + ([''] * (3 + (host_checks | length)))) | join('|') }}
+{% endif %}
+{% endfor %}
+
+SUMMARY
+TOTAL_HOSTS={{ ansible_play_hosts_all | length }}
+REACHABLE_HOSTS={{ ansible_play_hosts | length }}
+UNREACHABLE_HOSTS={{ (ansible_play_hosts_all | length) - (ansible_play_hosts | length) }}
+
+UNREACHABLE_HOST_LIST
+{% for host in ansible_play_hosts_all %}
+{% if hostvars[host].host_report is not defined %}
+{{ host }}
+{% endif %}
+{% endfor %}

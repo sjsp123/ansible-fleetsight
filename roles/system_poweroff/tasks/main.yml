@@ -1,0 +1,132 @@
+---
+# roles/system_poweroff/tasks/main.yml
+#
+# See README.md for the full design. Order matters:
+#   1. Safety asserts (fail fast, before anything destructive)
+#   2. Physical hosts only: capture the BMC/iLO address in-band while
+#      the OS is still up (needed for the out-of-band verification
+#      step later, once the OS - and any in-band access - is gone)
+#   3. Issue the shutdown (skippable via system_poweroff_skip_shutdown,
+#      to re-run just the verification against an already-off host)
+#   4. Verify power state out-of-band: BMC for [hpe_ilo_hosts], network
+#      reachability for everything else
+
+- name: Refuse to run without the explicit confirmation gate
+  ansible.builtin.assert:
+    that:
+      - system_poweroff_confirm | bool
+    fail_msg: >-
+      system_poweroff_confirm is false. This role shuts hosts down -
+      re-run with -e system_poweroff_confirm=true once you are sure
+      {{ inventory_hostname }} is one of the hosts you mean to power
+      off (sanity-check the full list first with --list-hosts).
+    success_msg: "Confirmation gate passed for {{ inventory_hostname }}."
+
+- name: Refuse to target this host if it IS the Ansible control node
+  ansible.builtin.assert:
+    that:
+      - system_poweroff_allow_control_node | bool or (ansible_connection | default('')) != 'local'
+    fail_msg: >-
+      {{ inventory_hostname }} uses ansible_connection=local - it looks
+      like the Ansible control node itself. Powering it off mid-play
+      would cut this play off from under itself. Set
+      system_poweroff_allow_control_node: true if this is genuinely
+      intended.
+
+- name: Refuse to target an unsupported OS
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] in system_poweroff_allowed_distributions
+      - ansible_facts['distribution_major_version'] | int in system_poweroff_allowed_major_versions
+    fail_msg: >-
+      {{ inventory_hostname }} is {{ ansible_facts['distribution'] }}
+      {{ ansible_facts['distribution_major_version'] }} - this role
+      only targets {{ system_poweroff_allowed_distributions | join('/') }}
+      {{ system_poweroff_allowed_major_versions | join('/') }}. Set
+      system_poweroff_skip_os_check: true to override.
+  when: not system_poweroff_skip_os_check
+
+- name: Note when a host's virtualization role disagrees with its inventory grouping
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} is in [hpe_ilo_hosts] but
+      ansible_virtualization_role reports "{{ ansible_virtualization_role }}"
+      (expected "host" for bare metal) - double check this host really
+      belongs in that group. The BMC verification step below will be
+      meaningless if it is actually a VM.
+  when:
+    - "'hpe_ilo_hosts' in group_names"
+    - ansible_virtualization_role is defined
+    - ansible_virtualization_role != 'host'
+
+- name: Physical hosts - determine the effective BMC/iLO address
+  when:
+    - "'hpe_ilo_hosts' in group_names"
+    - system_poweroff_verify_enabled
+  block:
+    - name: Use the pre-set BMC address override, if given
+      ansible.builtin.set_fact:
+        _system_poweroff_bmc_address: "{{ system_poweroff_bmc_address }}"
+      when: system_poweroff_bmc_address | length > 0
+
+    - name: Read this host's own iLO LAN IP in-band (ipmitool lan print)
+      ansible.builtin.shell: |
+        set -o pipefail
+        ipmitool lan print 2>/dev/null | awk -F': ' '/^IP Address[[:space:]]*:/ {print $2; exit}'
+      args:
+        executable: /bin/bash
+      become: true
+      register: _system_poweroff_lan_print
+      changed_when: false
+      failed_when: false
+      when: system_poweroff_bmc_address | length == 0
+
+    - name: Store the auto-detected BMC address
+      ansible.builtin.set_fact:
+        _system_poweroff_bmc_address: "{{ _system_poweroff_lan_print.stdout | default('') | trim }}"
+      when: system_poweroff_bmc_address | length == 0
+
+    - name: Fail if this host's iLO address could not be determined
+      ansible.builtin.fail:
+        msg: >-
+          Could not determine {{ inventory_hostname }}'s iLO/BMC
+          address via `ipmitool lan print`
+          (rc={{ _system_poweroff_lan_print.rc | default('n/a') }}).
+          Set a system_poweroff_bmc_address hostvar for this host to
+          skip auto-detection, or install/enable in-band IPMI access
+          (ipmi_si/ipmi_devintf kernel modules) first.
+      when: (_system_poweroff_bmc_address | default('')) == ''
+
+- name: Issue the graceful shutdown
+  ansible.builtin.command: "shutdown -h now '{{ system_poweroff_message }}'"
+  become: true
+  async: 1
+  poll: 0
+  when: not system_poweroff_skip_shutdown
+  # async + poll:0 fires the command and moves on immediately, rather
+  # than waiting synchronously for a response that will never arrive
+  # cleanly - the SSH connection to this host dies mid-shutdown, which
+  # a synchronous call would otherwise report as a connection error.
+  # This uses the plain `shutdown` binary (present on every RHEL/OL
+  # 7-10 install, systemd-backed or not) instead of the
+  # community.general.shutdown module, deliberately - this repo
+  # currently depends only on ansible.posix and community.postgresql
+  # (see requirements.yml), and every extra collection is one more
+  # thing to keep mirrored into offline_collections/ for the
+  # offline install path.
+
+- name: Verify the host actually powered off
+  when: system_poweroff_verify_enabled
+  block:
+    - name: Physical hosts - poll BMC power state until Off
+      ansible.builtin.include_tasks: verify_bmc.yml
+      when: "'hpe_ilo_hosts' in group_names"
+
+    - name: Everything else - poll network reachability until stopped
+      ansible.builtin.include_tasks: verify_network.yml
+      when: "'hpe_ilo_hosts' not in group_names"
+
+    - name: Summarize this host's verification result
+      ansible.builtin.debug:
+        var: system_poweroff_result
+      when: system_poweroff_result is defined

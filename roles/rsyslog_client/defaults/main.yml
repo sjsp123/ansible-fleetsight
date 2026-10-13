@@ -1,0 +1,66 @@
+---
+# roles/rsyslog_client/defaults/main.yml
+
+# Name of the inventory group containing exactly one collector host.
+log_collector_group: log_collector
+
+# TCP port the collector listens on (must match roles/rsyslog_collector).
+rsyslog_collector_port: 6514
+
+# Switch journald to persistent on-disk storage so the journal survives
+# reboots (rsyslog reads from journald via imjournal, so this does not
+# require a separate forwarding daemon).
+journald_persistent_storage: true
+
+# Whether this role sends a uniquely-tagged test log message right after
+# deploying the forwarding config, so the collector-side check in
+# playbooks/centralized_logging.yml can confirm it actually arrived.
+# Set false to skip generating this test traffic.
+rsyslog_forwarding_test_enabled: true
+
+# Syslog tag used for the end-to-end forwarding test message. Must match
+# the same variable used in the "Verify end-to-end log forwarding from
+# clients" play in playbooks/centralized_logging.yml.
+rsyslog_forwarding_test_tag: rsyslog_forwarding_test
+
+# Must match rsyslog_tls_enabled in roles/rsyslog_collector. Turns on
+# TLS-encrypted forwarding and verifies the collector's identity against
+# the lab CA it generated (or was given) - see
+# roles/rsyslog_collector/README.md for what this does and doesn't cover
+# (server-only TLS, not mutual TLS).
+rsyslog_tls_enabled: false
+
+# Where the collector's CA certificate is stored locally on THIS client
+# once fetched via hostvars from the collector (see tasks/main.yml) - no
+# private key ever leaves the collector.
+rsyslog_tls_dir: /etc/pki/rsyslog
+rsyslog_tls_ca_cert_path: "{{ rsyslog_tls_dir }}/rsyslog-ca-cert.pem"
+
+# Expected name on the collector's certificate - this client refuses to
+# forward logs to anything presenting a certificate under a different
+# name, even one signed by the same trusted CA. Defaults to whatever the
+# collector itself set as rsyslog_tls_cn; override here only if you need
+# this client to expect something different (uncommon).
+rsyslog_tls_permitted_peer: "{{ hostvars[groups[log_collector_group][0]].rsyslog_tls_cn | default('') }}"
+
+# Must match roles/rsyslog_collector's copy of this same variable - see
+# that role's defaults/main.yml for the full explanation (floors the
+# negotiated protocol at TLS 1.2, GnuTLS-native syntax chosen to avoid a
+# known RHEL 8 rsyslog parse error with the OpenSSL-config-style form).
+rsyslog_tls_priority_string: "NORMAL:-VERS-TLS1.0:-VERS-TLS1.1"
+
+# What this client reports as its HOSTNAME field in every message it
+# sends (locally-generated and forwarded alike) - the collector's DB
+# insert template stores THIS value in the fromhost column (see
+# roles/rsyslog_collector/templates/05-remote-collector-db.conf.j2),
+# which every watcher app (disk_space_watcher, chrony_watcher,
+# service_failure_watcher, host_availability_watcher, log_alerter) reads
+# straight out of the database to show in alert emails. Defaults to
+# inventory_hostname rather than ansible_fqdn/the OS's own hostname,
+# because inventory_hostname is guaranteed to already be the fully
+# qualified name in this repo's real inventory (e.g. aap1.lab.example.com)
+# - relying on the box's own DNS/hostnamectl configuration instead could
+# silently keep producing a short name if that isn't itself set to the
+# FQDN. Only affects NEW messages sent after this role next runs; rows
+# already stored in the DB keep whatever hostname they were logged with.
+rsyslog_client_local_hostname: "{{ inventory_hostname }}"

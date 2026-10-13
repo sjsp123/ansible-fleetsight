@@ -1,0 +1,21 @@
+---
+# group_vars/all/rsyslog_tls.yml
+# Fleet-wide override to turn on TLS for the rsyslog client -> collector
+# transport (see roles/rsyslog_collector/README.md and
+# roles/rsyslog_client/README.md "TLS" sections for the full picture).
+# This follows the same pattern as group_vars/all/log_db.yml.
+
+# Opt-in toggle - defaults to false/off in both roles' own defaults/main.yml.
+# true here means: server-only TLS (collector proves its identity to
+# clients via a self-signed lab CA that roles/rsyslog_collector generates
+# automatically on first run; the collector does NOT request or verify a
+# certificate from clients - see roles/rsyslog_collector/README.md "TLS"
+# for why mutual TLS was deliberately not chosen at this fleet size).
+rsyslog_tls_enabled: true
+
+# Leave the rest at role defaults unless you have a reason to change them:
+#   rsyslog_tls_dir: /etc/pki/rsyslog
+#   rsyslog_tls_generate_certs: true   # set false to supply your own CA/cert
+#   rsyslog_tls_ca_days: 3650
+#   rsyslog_tls_cert_days: 825
+# See roles/rsyslog_collector/README.md "Variables" for the full list.

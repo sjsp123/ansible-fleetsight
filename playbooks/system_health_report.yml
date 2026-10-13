@@ -1,0 +1,99 @@
+---
+# system_health_report.yml
+#
+# Ansible replacement for the Python "System Health Check and Configuration
+# Report" script (psutil/distro/tabulate). Uses only ansible.builtin modules
+# and facts, so no Python libraries need to be installed on target hosts.
+#
+# Usage:
+#   ansible-playbook -i inventory playbooks/system_health_report.yml
+#   ansible-playbook -i inventory playbooks/system_health_report.yml --become
+#                                                       # if a target needs it
+#
+# Output:
+#   - Report is printed to the console for every host.
+#   - A plain-text report per host is saved locally under ./reports/
+#     as <hostname>_system_health_report.txt
+
+- name: System Health Check and Configuration Report
+  hosts: all
+  gather_facts: true
+  become: false
+
+  vars:
+    # Same three services checked in the original script - override with
+    # -e critical_services='["sshd","chronyd"]' if needed.
+    critical_services:
+      - sshd
+      - firewalld
+      - multipathd
+    report_local_dir: "{{ playbook_dir }}/reports"
+    remote_report_path: "/tmp/system_health_report_{{ inventory_hostname }}.txt"
+
+  tasks:
+    - name: Get human-readable uptime
+      ansible.builtin.command: uptime -p
+      register: uptime_output
+      changed_when: false
+
+    - name: Get load averages
+      ansible.builtin.command: cat /proc/loadavg
+      register: loadavg_output
+      changed_when: false
+
+    - name: Get network totals (bytes/packets sent+received, excludes loopback)
+      ansible.builtin.shell: |
+        set -o pipefail
+        awk 'NR>2 && $1 !~ /^lo:/ {
+          sub(/:/, "", $1);
+          rx_bytes += $2; rx_packets += $3;
+          tx_bytes += $10; tx_packets += $11
+        } END {
+          printf "%d %d %d %d", tx_bytes, rx_bytes, tx_packets, rx_packets
+        }' /proc/net/dev
+      args:
+        executable: /bin/bash
+      register: net_output
+      changed_when: false
+
+    - name: Parse network totals into a fact
+      ansible.builtin.set_fact:
+        net_info:
+          bytes_sent: "{{ net_output.stdout.split()[0] }}"
+          bytes_received: "{{ net_output.stdout.split()[1] }}"
+          packets_sent: "{{ net_output.stdout.split()[2] }}"
+          packets_received: "{{ net_output.stdout.split()[3] }}"
+
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Determine status of each critical service
+      ansible.builtin.set_fact:
+        service_status: >-
+          {{ service_status | default({}) | combine({
+               item: (ansible_facts.services.get(item + '.service', {}).get('state')
+                      or ansible_facts.services.get(item, {}).get('state')
+                      or 'not-found')
+          }) }}
+      loop: "{{ critical_services }}"
+
+    - name: Render system health report
+      ansible.builtin.template:
+        src: templates/report.txt.j2
+        dest: "{{ remote_report_path }}"
+        mode: "0644"
+
+    - name: Read rendered report back for console output
+      ansible.builtin.command: "cat {{ remote_report_path }}"
+      register: report_cat
+      changed_when: false
+
+    - name: Print report to console
+      ansible.builtin.debug:
+        msg: "{{ report_cat.stdout_lines }}"
+
+    - name: Fetch report copy to the control node
+      ansible.builtin.fetch:
+        src: "{{ remote_report_path }}"
+        dest: "{{ report_local_dir }}/{{ inventory_hostname }}_system_health_report.txt"
+        flat: true

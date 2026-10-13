@@ -1,0 +1,36 @@
+# Managed by Ansible (roles/rsyslog_collector) - do not edit by hand.
+#
+# Writes a curated, audit-focused subset of received remote-host messages
+# into PostgreSQL (see roles/log_db), in addition to the per-host flat
+# files configured in 10-remote-collector.conf, so it can be searched via
+# roles/log_search_ui. Local (127.0.0.1) messages are excluded, matching
+# 10-remote-collector.conf. The flat files are NOT subject to the filter
+# below - they keep every received message at every severity as a
+# forensic backup; only what becomes searchable here is trimmed.
+
+module(load="ompgsql")
+
+$template LogDBFmt,"insert into {{ rsyslog_collector_db_table }} (message, facility, fromhost, priority, devicereportedtime, receivedat, syslogtag) values ('%msg%', %syslogfacility%, '%HOSTNAME%', %syslogpriority%, '%timereported:::date-pgsql%', '%timegenerated:::date-pgsql%', '%syslogtag%')",STDSQL
+
+# A message reaches the database if it's from a remote host AND either:
+#  (a) its facility is in the always-keep list (rsyslog_collector_db_
+#      always_facilities, default authpriv + cron) - kept at EVERY
+#      severity, including debug, because these facilities routinely
+#      carry audit-relevant events (sudo, su, sshd, PAM session open/
+#      close, cron job execution) logged at notice/info rather than
+#      warning+; or
+#  (b) its severity is at or more urgent than rsyslog_collector_db_
+#      min_severity (default 5 = notice), which drops routine info/debug
+#      chatter from every other facility.
+# See roles/rsyslog_collector/README.md "Database log filtering" for the
+# SIEM/compliance guidance this default is based on.
+if $fromhost-ip != '127.0.0.1' and (
+{% for fac in rsyslog_collector_db_always_facilities -%}
+    $syslogfacility-text == '{{ fac }}' or
+{% endfor -%}
+    $syslogseverity <= {{ rsyslog_collector_db_min_severity }}
+) then {
+    action(type="ompgsql" server="{{ rsyslog_collector_db_host }}" db="{{ rsyslog_collector_db_name }}"
+           uid="{{ rsyslog_collector_db_user }}" pass="{{ rsyslog_collector_db_password }}"
+           template="LogDBFmt")
+}

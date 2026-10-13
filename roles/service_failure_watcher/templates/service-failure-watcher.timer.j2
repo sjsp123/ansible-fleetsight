@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/service_failure_watcher) - do not edit by hand.
+[Unit]
+Description=Run service-failure-watcher.service every {{ service_failure_watcher_poll_interval_seconds }}s
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec={{ service_failure_watcher_poll_interval_seconds }}s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

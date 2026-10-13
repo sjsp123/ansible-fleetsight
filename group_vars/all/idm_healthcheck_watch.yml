@@ -1,0 +1,20 @@
+---
+# group_vars/all/idm_healthcheck_watch.yml
+# Fleet-wide overrides for roles/idm_healthcheck_watch (see that
+# role's defaults/main.yml for the full variable list). Uncomment/edit
+# as needed - this follows the same pattern as
+# group_vars/all/disk_space_check.yml.
+
+# Opt-in toggle - defaults to false/off in roles/idm_healthcheck_watch's
+# own defaults; this file flips it on for
+# playbooks/centralized_logging.yml. Applies only to [idm] hosts - a
+# no-op everywhere else.
+idm_healthcheck_watch_enabled: true
+
+# idm_healthcheck_watch_poll_interval_seconds: 1800
+# idm_healthcheck_watch_mode: "all"
+# idm_healthcheck_watch_extra_sources: []
+# idm_healthcheck_watch_timeout_seconds: 180
+# See roles/idm_healthcheck_watch/README.md "Why this runs as root" -
+# unlike roles/disk_space_check/roles/chrony_check, this role's
+# systemd service always runs as root; there is no *_user override.
