@@ -1,5 +1,6 @@
 ---
-# Adapted from an earlier internal build of this role (2026-10-21). See README.md for the port notes: what was
+# Adapted from an earlier internal build of the role idm/roles/patching_idm
+# (2026-10-21). See README.md in this role for the port notes: what was
 # kept, what was stripped, and why.
 
 - name: Refresh dnf metadata and list pending updates (no changes applied)

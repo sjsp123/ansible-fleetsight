@@ -1,7 +1,7 @@
 ---
 # patching_aap — controller-host patching with platform pre/post health checks.
 #
-# Assembled
+# Adapted from an earlier internal build of the patching role and assembled
 # against Red Hat's documented verification points for containerized AAP.
 # Estate-specific machinery (vault credentials, estate hostnames) excluded.
 

@@ -1,7 +1,8 @@
 ---
 # Serial IdM patching with post-reboot service verification.
 #
-# Adapted from an earlier internal build of this playbook (2026-10-21).
+# Adapted from an earlier internal build of the playbook (patching_idm_serial,
+# 2026-10-21). Port changes vs the original:
 #   - the vault/temp-SSH-key machinery is gone: the lab's svc_ansible
 #     account, IPA-published keys, and the controller machine credential
 #     handle authentication natively
