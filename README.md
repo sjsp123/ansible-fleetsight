@@ -93,6 +93,66 @@ has annotated screenshots of both web dashboards (`log_search_ui`,
 `linuxdb_dashboard`) captured from the home lab — useful as a
 reference for what each dashboard looks like.
 
+## AAP 2.7 platform deployment (controller-native operations)
+
+This repo is consumed from TWO control planes:
+
+| Control plane | What runs there |
+|---|---|
+| `admin1` (CLI, this checkout) | Interactive tooling and wrappers, the dashboard reader, alerting/watcher timers (cron) |
+| `aap27.lab.example.com` (AAP 2.7, containerized) | Scheduled + surveyed operational automation: patching, DNS standardisation, fleet reporting, IdM healthchecks |
+
+The platform runs AAP 2.7 containerized with a custom execution
+environment (`aap-operations-ee`) built from this repo's pinned
+`requirements.yml` — so CLI and controller runs execute against the same
+collection versions.
+
+### Controller-native patterns in this repo
+
+These are the migration rules that keep the content working from both
+control planes (each was learned the hard way — see the failure notes in
+the platform build log):
+
+- `inventory.ini` is **context-free**: no `ansible_connection=local`, no
+  control-node assumptions. The controller's inventory is sourced from
+  this same file — one inventory, both execution paths, zero drift.
+- **No `vars_prompt`** in playbooks: without a TTY (AAP EE, cron) it
+  blocks forever. Targeting arrives via extra-vars (wrapper scripts,
+  controller surveys).
+- Report/snapshot writes **delegate to the `[log_collector]` group**, never
+  to localhost — inside an EE, localhost is the ephemeral container.
+- Run timestamps pin **`TZ=Europe/London`** (date lookups run on the
+  control node; the EE is UTC otherwise — mixed clocks broke the
+  dashboard's filename-sorted "latest" logic).
+- Shared-file writes use **`throttle: 1`** (concurrent `lineinfile`
+  appends to one delegated file race and lose rows).
+- Patching roles record **evidence**: a counts CSV plus per-host full
+  transaction detail files on the collector.
+
+### Controller job templates
+
+| Template | Scope | Schedule | Notes |
+|---|---|---|---|
+| `patch-systems` | `[servers]` minus idm/aap | nightly 23:00 | surveys: target_hosts, update_serial, reboot flag |
+| `patch-idm-serial` | `[idm]` | daily 21:00 | serial 1; `ipactl` 8-service verification after every run |
+| `patch-aap-health` | `[aap_servers]` | manual | PRE/POST platform health gates; reboots of the controller host are manual events |
+| `standardise-dns` | `[servers]` minus idm | ad hoc | idempotent fleet resolver configuration |
+| `hostinfo` / `linuxdb-dashboard` | fleet | daily 00:00 / 00:30 | reporting pipeline; writes land on the collector |
+| `idm-healthcheck` | `[idm]` | ad hoc | full `ipa-healthcheck` sweep (10–20 min on a master) |
+
+### Tooling
+
+- `scripts/joblog.sh <JOB_ID>` — fetch a job's **complete** output via the
+  AAP API (the web UI renders only a window of long runs). Credentials in
+  `~/.aap_api_credentials` (chmod 600, never committed).
+
+### What stays on admin1
+
+Interactive wrapper scripts, the dashboard reader, and the
+alerting/watcher timers (candidates for Event-Driven Ansible rulebooks
+later). Not everything belongs on the platform — the controller runs
+scheduled/operational automation; the CLI keeps interactive tooling.
+
 ## Environments
 
 The repo currently drives one real environment — the home lab — whose
@@ -790,6 +850,14 @@ script is still fine on its own (and slightly faster, since it only
 pulls the repo once instead of twice).
 
 ## Scheduled reporting (cron)
+
+> **Status (2026-10-23):** `hostinfo` and `linuxdb_dashboard` are now
+> **also scheduled on the AAP controller** (00:00 / 00:30 daily, after the
+> nightly 22:00/23:00 patch runs). Do not double-schedule: the 00:00 cron
+> entry and the controller's 00:00 schedule would both fire. Recommended
+> split: the controller owns 00:00/00:30, cron keeps 06:00/12:00/18:00 —
+> or retire the cron reporting entries entirely and keep only the
+> alerting/watcher timers here.
 
 Keeps `hostinfo.csv` and the `linuxdb_reports` diagnostic history
 refreshing automatically, four times a day, with no manual run needed.
