@@ -1,0 +1,130 @@
+---
+# standardise_dns.yml
+#
+# Make the fleet's resolver configuration declarative and identical.
+#
+# Target state:
+#   - Lab-side connections (192.168.100.0/24): primary resolver = idm1
+#     (authoritative for lab.example.com, forwards internet queries).
+#   - Every other connection (e.g. the Fusion NAT side): public fallback
+#     resolver (1.1.1.1). Fusion's NAT DNS shim (192.168.187.2) is
+#     deliberately removed - it is the least reliable resolver in the
+#     topology and has produced malformed/NXDOMAIN answers.
+#
+# Design notes:
+#   - Idempotent: community.general.nmcli only changes connections that
+#     differ from the desired state.
+#   - Devices are REAPPLIED, not bounced, so existing connections (and
+#     the SSH session running this playbook) survive.
+#   - The IdM/DNS server itself (idm1) is skipped - an IPA server owns
+#     its own resolver configuration.
+#   - serial: 1 - one host at a time. A resolver change is exactly the
+#     kind of change you want canaried, not fleet-wide in one blast.
+#
+# Run:
+#   ansible-playbook playbooks/standardise_dns.yml --limit 'servers:!idm'
+# (the idm exclusion is also enforced inside the play, belt and braces)
+
+- name: Standardise fleet DNS resolvers
+  hosts: servers
+  become: true
+  serial: 1
+  vars:
+    dns_lab_primary: "192.168.100.10"    # idm1 - authoritative for lab.example.com
+    dns_internet_fallback: "1.1.1.1"
+    lab_subnet: "192.168.100."
+
+  tasks:
+    - name: Skip the DNS server itself (it owns its own resolver)
+      ansible.builtin.meta: end_host
+      when: inventory_hostname in groups.get('idm', [])
+
+    - name: Collect active NetworkManager connections
+      ansible.builtin.command: nmcli -t -f NAME,DEVICE,TYPE con show --active
+      register: nmcli_active
+      changed_when: false
+      check_mode: false   # read-only fact gathering must work in --check too
+
+    - name: Map active ethernet devices to their connection names
+      ansible.builtin.set_fact:
+        conn_by_device: >-
+          {%- set d = {} -%}
+          {%- for line in nmcli_active.stdout_lines if line is search('ethernet$') -%}
+          {%- set p = line.split(':') -%}
+          {%- set _ = d.update({p[-2]: p[0]}) -%}
+          {%- endfor -%}
+          {{ d }}
+
+    - name: Show the device-to-connection map
+      ansible.builtin.debug:
+        var: conn_by_device
+
+    - name: Build the per-connection DNS plan from interface facts
+      ansible.builtin.set_fact:
+        dns_plan: >-
+          {%- set plan = [] -%}
+          {%- for iname in ansible_facts.interfaces -%}
+          {%- set f = ansible_facts[iname] -%}
+          {%- if f.type is defined and f.type == 'ether' and f.ipv4 is defined and conn_by_device.get(iname) -%}
+          {%- set is_lab = f.ipv4.address is match('^' ~ lab_subnet) -%}
+          {%- set _ = plan.append({'conn': conn_by_device[iname], 'dev': iname, 'dns4': ([dns_lab_primary] if is_lab else [dns_internet_fallback]), 'prio': (10 if is_lab else 100)}) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {{ plan }}
+
+    - name: Show the plan before applying it
+      ansible.builtin.debug:
+        var: dns_plan
+
+    - name: Apply resolver configuration per connection
+      community.general.nmcli:
+        conn_name: "{{ item.conn }}"
+        ifname: "{{ item.dev }}"
+        type: ethernet
+        dns4: "{{ item.dns4 }}"
+        dns4_ignore_auto: true
+        state: present
+      loop: "{{ dns_plan }}"
+      register: apply_res
+
+    # community.general.nmcli has no dns-priority parameter, and CLI
+    # 'nmcli con mod' is always 'changed', so guard each change with a
+    # read of the current value to keep the playbook idempotent.
+    - name: Set ipv4.dns-priority where it differs
+      ansible.builtin.shell: |
+        cur="$(nmcli -g ipv4.dns-priority con show '{{ item.conn }}')"
+        if [ "$cur" != "{{ item.prio }}" ]; then
+          nmcli con mod '{{ item.conn }}' ipv4.dns-priority {{ item.prio }}
+          echo changed
+        fi
+      loop: "{{ dns_plan }}"
+      register: prio_set
+      changed_when: "'changed' in prio_set.stdout"
+
+    - name: Determine which connections actually changed
+      ansible.builtin.set_fact:
+        changed_conns: "{{ (apply_res.results | selectattr('changed') | map(attribute='item.conn') | list)
+                           + (prio_set.results | selectattr('changed') | map(attribute='item.conn') | list) }}"
+
+    - name: Reapply settings on live devices (keeps connections - and this SSH session - alive)
+      ansible.builtin.command: "nmcli device reapply {{ item.dev }}"
+      loop: "{{ dns_plan }}"
+      when: item.conn in changed_conns
+      changed_when: true
+
+    - name: Verify lab names resolve
+      ansible.builtin.command: "getent hosts idm1.lab.example.com"
+      changed_when: false
+      register: dig_lab
+
+    - name: Verify internet names resolve
+      ansible.builtin.command: "getent hosts registry.redhat.io"
+      changed_when: false
+      register: dig_inet
+
+    - name: Assert both resolution paths work
+      ansible.builtin.assert:
+        that:
+          - dig_lab.stdout_lines | length > 0
+          - dig_inet.stdout_lines | length > 0
+        success_msg: "DNS verified on {{ inventory_hostname }}: lab + internet OK"

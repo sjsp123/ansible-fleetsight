@@ -1,0 +1,18 @@
+---
+# Shared patching-history defaults. Callers may override any of these
+# via include_role vars (e.g. per-role enable gates live in the caller).
+
+patching_history_path: "/linuxdb/patching/ansible_patching_history.csv"
+patching_history_header: "Hostname,Date,Installed,Updated,Removed"
+
+# Written into the row; the TZ pin matches the run-timestamp convention
+# used across the repo (lookups run on the control node/EE, which is UTC)
+patching_history_host: "{{ inventory_hostname }}"
+patching_history_date: "{{ lookup('pipe', 'TZ=Europe/London date +%Y%m%d_%H%M%S') }}"
+patching_history_fields: []
+
+# Optional full transaction detail (e.g. 'dnf history info last' output) —
+# when non-empty, it is saved as a timestamped per-host audit file under
+# {{ patching_history_path | dirname }}/detail/<host>/<file_ts>.txt
+patching_history_detail: ""
+patching_history_file_ts: "{{ lookup('pipe', 'TZ=Europe/London date +%Y%m%d_%H%M%S') }}"

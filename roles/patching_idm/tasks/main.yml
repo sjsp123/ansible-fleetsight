@@ -1,0 +1,125 @@
+---
+# Adapted from an earlier internal build of this role (2026-10-21). See README.md for the port notes: what was
+# kept, what was stripped, and why.
+
+- name: Refresh dnf metadata and list pending updates (no changes applied)
+  ansible.builtin.command: dnf -q check-update --refresh
+  changed_when: false
+  # rc 0 = updates listed, rc 100 = none available, anything else = error
+  failed_when: patching_idm_refresh.rc not in [0, 100]
+  check_mode: false
+  register: patching_idm_refresh
+
+- name: Record pending update count
+  ansible.builtin.set_fact:
+    patching_idm_pending: "{{ 0 if patching_idm_refresh.rc == 100 else (patching_idm_refresh.stdout_lines | length) }}"
+
+- name: Update all installed packages
+  ansible.builtin.dnf:
+    name: '*'
+    state: latest
+    update_cache: true
+  register: patching_idm_update
+
+- name: Check whether a reboot is required
+  ansible.builtin.command: needs-restarting -r
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  register: patching_idm_reboot_required
+
+- name: Reboot if required, and wait for IdM to come back
+  ansible.builtin.reboot:
+    msg: "Reboot initiated by Ansible (IdM patching)"
+    connect_timeout: 5
+    reboot_timeout: "{{ patching_idm_reboot_timeout }}"
+    pre_reboot_delay: 0
+    post_reboot_delay: "{{ patching_idm_post_reboot_delay }}"
+    test_command: whoami
+  when: patching_idm_reboot_required.rc == 1
+
+- name: Pause after reboot (IdM services take time to settle)
+  ansible.builtin.pause:
+    minutes: "{{ patching_idm_pause_after_reboot_minutes }}"
+  when: patching_idm_reboot_required.rc == 1
+
+- name: Ensure the ipa service is running
+  ansible.builtin.systemd:
+    name: ipa.service
+    state: started
+
+- name: Collect ipactl status
+  ansible.builtin.command: ipactl status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  register: patching_idm_ipactl
+
+# ipactl output varies slightly across IPA versions ("Directory Service:
+# RUNNING" vs "Directory Service (dirsrv): RUNNING"), so each required
+# service is matched by keyword on any line that also shows RUNNING.
+# check-update output is one clean NEVRA per line — the packages this
+# run patched. Full old→new version detail lives in the audit file on
+# the collector.
+- name: Show the packages that were patched (compact list)
+  ansible.builtin.debug:
+    msg: "{{ patching_idm_refresh.stdout_lines }}"
+  when: patching_idm_refresh.rc == 0
+
+- name: Verify every required IdM service is RUNNING
+  ansible.builtin.assert:
+    that:
+      - patching_idm_ipactl.stdout_lines | select('search', 'RUNNING') | select('search', item) | list | length > 0
+    success_msg: "IdM service RUNNING: {{ item }}"
+  loop: "{{ patching_idm_required_services }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Get package counts from the last dnf transaction
+  ansible.builtin.command: dnf history info last
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: patching_idm_update is changed
+  register: patching_idm_dnf_history
+
+  # dnf history info lists ONE LINE PER PACKAGE under each action
+  # heading — so counts are line-counts, not digits after a keyword
+  # (pattern proven in playbooks/dnf_history.yml).
+- name: Count Installed packages in the last transaction
+  ansible.builtin.shell: echo "{{ patching_idm_dnf_history.stdout }}" | grep -cE '^[[:space:]]+Install[[:space:]]+'
+  register: patching_idm_installed_raw
+  changed_when: false
+  failed_when: false
+  when: patching_idm_update is changed
+
+- name: Count Updated packages in the last transaction
+  ansible.builtin.shell: echo "{{ patching_idm_dnf_history.stdout }}" | grep -cE '^[[:space:]]+Upgrade[[:space:]]+'
+  register: patching_idm_updated_raw
+  changed_when: false
+  failed_when: false
+  when: patching_idm_update is changed
+
+- name: Count Removed packages in the last transaction
+  ansible.builtin.shell: echo "{{ patching_idm_dnf_history.stdout }}" | grep -cE '^[[:space:]]+Removed[[:space:]]+'
+  register: patching_idm_removed_raw
+  changed_when: false
+  failed_when: false
+  when: patching_idm_update is changed
+
+- name: Normalize counts to integers (zero when no packages changed)
+  ansible.builtin.set_fact:
+    patching_idm_installed: "{{ patching_idm_installed_raw.stdout | default('0') | int }}"
+    patching_idm_updated: "{{ patching_idm_updated_raw.stdout | default('0') | int }}"
+    patching_idm_removed: "{{ patching_idm_removed_raw.stdout | default('0') | int }}"
+
+- name: Record the patching run in the shared history CSV
+  ansible.builtin.include_role:
+    name: patching_history
+  vars:
+    patching_history_fields:
+      - "{{ patching_idm_installed }}"
+      - "{{ patching_idm_updated }}"
+      - "{{ patching_idm_removed }}"
+    patching_history_detail: "{{ patching_idm_dnf_history.stdout | default('') }}"
+  when: patching_idm_history_enabled | default(true) | bool

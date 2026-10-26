@@ -2,9 +2,9 @@
 # group_vars/homelab.yml
 #
 # Overrides that apply ONLY to hosts in the inventory's [homelab] group
-# (see inventory.example.ini "Environment group"). Give your home lab's
-# local, gitignored `inventory` file's collector host membership in
-# `[homelab]` for this file to take effect.
+# (see inventory.ini — the canonical, committed lab inventory).
+# All hosts in [servers] must also be in [homelab] — mirrored exactly,
+# same FQDNs — for this file to take effect on them.
 #
 # Currently this restates the safe role defaults explicitly (and the
 # lab's NTP topology), so the home lab's intended security posture is

@@ -1,0 +1,28 @@
+---
+# Serial IdM patching with post-reboot service verification.
+#
+# Adapted from an earlier internal build of this playbook (2026-10-21).
+#   - the vault/temp-SSH-key machinery is gone: the lab's svc_ansible
+#     account, IPA-published keys, and the controller machine credential
+#     handle authentication natively
+#   - the add_host/new_host targeting dance is replaced by a plain
+#     survey-driven target (all lab hosts are in the inventory)
+#   - patching history is appended on the collector via the
+#     log_collector delegation pattern (the original delegated to a
+#     hardcoded estate control node with vaulted credentials)
+#   - yum → dnf (RHEL 10)
+#
+# AAP job template: patch-idm-serial (Limit: idm — never the fleet)
+# CLI:
+#   ansible-playbook playbooks/patching_idm_serial.yml \
+#     -e target_host=idm1.lab.example.com
+
+- name: Serial IdM patching with post-reboot service verification
+  hosts: "{{ target_host | mandatory }}"
+  become: true
+  gather_facts: true
+  serial: 1
+  max_fail_percentage: 0
+
+  roles:
+    - role: patching_idm

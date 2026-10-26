@@ -1,0 +1,47 @@
+---
+# Knobs for the AAP controller-host patching role.
+
+# The full container roster of this growth-topology deployment. If you add
+# components (e.g. Lightspeed/MCP) or drop metrics, keep this list in sync.
+patching_aap_expected_containers:
+  - postgresql
+  - redis-unix
+  - redis-tcp
+  - automation-gateway-proxy
+  - automation-gateway
+  - receptor
+  - automation-controller-rsyslog
+  - automation-controller-task
+  - automation-controller-web
+  - automation-eda-api
+  - automation-eda-daphne
+  - automation-eda-web
+  - automation-eda-worker-1
+  - automation-eda-worker-2
+  - automation-eda-activation-worker-1
+  - automation-eda-activation-worker-2
+  - automation-hub-api
+  - automation-hub-content
+  - automation-hub-web
+  - automation-hub-worker-1
+  - automation-hub-worker-2
+  - automation-metrics-web
+  - automation-metrics-tasks
+  - automation-metrics-scheduler
+
+# Installer preflight requires free space for the deployment (which lives
+# under $HOME on this build) — checked on / and /home before patching.
+patching_aap_min_free_bytes: 21474836480   # 20 GiB
+
+# Platform gateway probe (any of these statuses means "answering")
+patching_aap_gateway_url: "https://aap27.lab.example.com"
+patching_aap_gateway_ok_status: [200, 301, 302]
+
+# Controller-host reboots are MANUAL events (policy): a reboot would kill
+# the very job performing it. The role reports needs-restarting instead.
+patching_aap_reboot_enabled: false
+patching_aap_reboot_timeout: 3600
+patching_aap_post_reboot_delay: 60
+
+# History rows/files written by the shared patching_history role
+patching_aap_history_enabled: true

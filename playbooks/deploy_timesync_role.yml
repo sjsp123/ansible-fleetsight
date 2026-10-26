@@ -40,7 +40,7 @@
       ansible.builtin.stat:
         path: /usr/share/ansible/collections/ansible_collections/redhat/rhel_system_roles/MANIFEST.json
       register: _timesync_role_collection
-      delegate_to: localhost
+      delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
       become: false
       run_once: true
 

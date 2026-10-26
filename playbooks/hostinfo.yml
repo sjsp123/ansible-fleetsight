@@ -1,21 +1,12 @@
 ---
 - name: Host Information Report
-  hosts: "{{ target_host }}"
+  # target_host comes from extra-vars (CLI -e, wrapper script, or an AAP
+  # controller survey answer). vars_prompt was removed 2026-10-19: without
+  # a TTY (cron, AAP EE) it blocks forever waiting on stdin — the prompt
+  # convenience is provided by the wrapper scripts at shell level instead.
+  hosts: "{{ target_host | default('all') }}"
   gather_facts: true
   become: true
-
-  vars_prompt:
-    - name: target_host
-      prompt: "Enter target host or inventory group"
-      private: no
-      default: "all"
-      # default lets an interactive run just press Enter for the common
-      # case. For unattended/cron runs, ALWAYS pass -e target_host=all
-      # (or a specific group) explicitly rather than relying on this
-      # default alone - Ansible skips vars_prompt entirely when the var
-      # is already supplied via --extra-vars, which is the reliable,
-      # version-proof way to guarantee a non-interactive run never blocks
-      # waiting on a stdin prompt that cron can't answer.
 
   vars:
     # Lives under /linuxdb (same convention as linuxdb_reports_data_dir

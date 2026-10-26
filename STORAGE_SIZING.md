@@ -70,14 +70,13 @@ real **DB MB/host/day**, including index overhead.
 **3. Extrapolate to your real fleet size:**
 
 ```
-Fleet /var/log/remote (14-day retention) ≈ (lab MB/host/day) × N × ~3.2
-    — where N is your target fleet size
+Fleet /var/log/remote (14-day retention) ≈ (lab MB/host/day) × 160 × ~3.2
     — the ×3.2 accounts for 1 day uncompressed + 13 days gzip'd at ~6:1
 
-Fleet PostgreSQL (90-day retention) ≈ (lab DB MB/host/day) × N × 90
+Fleet PostgreSQL (90-day retention) ≈ (lab DB MB/host/day) × 160 × 90
 ```
 
-Do this before buying/provisioning disk — at larger fleet sizes the gap between
+Do this before buying/provisioning disk — at 160+ hosts the gap between
 a "quiet" and "chatty" estate is easily a 5-10x difference in required
 PostgreSQL storage, dwarfing every other choice in this repo.
 
@@ -97,9 +96,9 @@ PostgreSQL (pg_total_relation_size, so trigram index already included):
   → 463 / 5 / 3.12 ≈ 29.7 MB/host/day
 ```
 
-Extrapolated to an illustrative 100-host fleet: `/var/log/remote`
-@ 14 days ≈ **9.2 × 100 × 3.2 ≈ 2.9 GB**; PostgreSQL @ 90 days ≈
-**29.7 × 100 × 90 ≈ 261 GB**. Notably quieter than the ballpark table
+Extrapolated to 160 hosts: `/var/log/remote` @ 14 days ≈
+**9.2 × 160 × 3.2 ≈ 4.6 GB**; PostgreSQL @ 90 days ≈
+**29.7 × 160 × 90 ≈ 420 GB**. Notably quieter than the ballpark table
 below — this lab genuinely has low traffic.
 
 **Don't provision off the bare extrapolation.** A 3-day sample misses
@@ -118,15 +117,15 @@ spanning one patch cycle, before treating any number as final.
 Use this only as a sanity check on your own lab numbers, not as a
 substitute for them:
 
-| Logging profile                                                              | Per host/day | Fleet/day (per 100 hosts) | `/var/log/remote` @ 14d | PostgreSQL @ 90d      |
+| Logging profile                                                              | Per host/day | Fleet/day (160 hosts) | `/var/log/remote` @ 14d | PostgreSQL @ 90d      |
 | ------------------------------------------------------------------------------ | -----------: | ---------------------: | -----------------------: | ----------------------: |
-| **Low** — quiet baseline (auth, cron, systemd, sshd only)                     |     ~20 MB   |         ~2.0 GB        |          ~10-13 GB        |       ~400-600 GB       |
-| **Medium** — typical mixed estate (SELinux enforcing, moderate sudo/auditd)   |     ~75 MB   |         ~7.5 GB        |          ~30-45 GB        |       ~1.2-1.9 TB        |
-| **High** — verbose (heavy auditd, SSSD debug, app logs via syslog)            |    ~200 MB   |         ~20 GB         |          ~95-125 GB      |       ~3-4.5 TB          |
+| **Low** — quiet baseline (auth, cron, systemd, sshd only)                     |     ~20 MB   |         ~3.2 GB        |          ~15-20 GB        |       ~600 GB-1 TB       |
+| **Medium** — typical mixed estate (SELinux enforcing, moderate sudo/auditd)   |     ~75 MB   |         ~12 GB         |          ~50-75 GB        |       ~2-3 TB           |
+| **High** — verbose (heavy auditd, SSSD debug, app logs via syslog)            |    ~200 MB   |         ~32 GB         |          ~150-200 GB      |       ~5-7 TB           |
 
 `/linuxdb` (reports + config snapshots + hostinfo history) is
 negligible by comparison — plain text, a handful of KB per host per
-run, capped by `keep_runs`. Budget **10-20 GB** for it even on large fleets
+run, capped by `keep_runs`. Budget **10-20 GB** for it at 160+ hosts
 with default retention and move on.
 
 **Given how large PostgreSQL gets at 90-day retention on the full raw
@@ -472,8 +471,8 @@ full-fleet rollout.
       — see "Worked example" above). Real hosts with real users,
       applications, and security tooling are expected to run higher;
       note the actual multiplier you observe rather than assuming one.
-- [ ] **Recompute the fleet-size extrapolation** for your real
-      target fleet size with the pilot-measured rate:
+- [ ] **Recompute the 160-host (or your real target fleet size)
+      extrapolation** with the pilot-measured rate:
       ```
       Fleet /var/log/remote @ 14d ≈ (pilot MB/host/day) × <fleet size> × 3.2
       Fleet PostgreSQL @ 90d      ≈ (pilot MB/host/day) × <fleet size> × 90

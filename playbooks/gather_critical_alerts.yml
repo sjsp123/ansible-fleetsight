@@ -98,14 +98,14 @@
       failed_when: false
 
     - name: Create report directories
-      delegate_to: localhost
+      delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
       file:
         path: "/var/tmp/server-findings/hosts"
         state: directory
         mode: "0755"
 
     - name: Save individual host report
-      delegate_to: localhost
+      delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
       copy:
         dest: "/var/tmp/server-findings/hosts/{{ inventory_hostname }}.txt"
         mode: "0644"
@@ -149,7 +149,7 @@
 
     - name: Build consolidated report
       run_once: true
-      delegate_to: localhost
+      delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
       assemble:
         src: /var/tmp/server-findings/hosts
         dest: /var/tmp/server-findings/monthly_linux_health_report.txt
@@ -157,6 +157,6 @@
 
     - name: Display report location
       run_once: true
-      delegate_to: localhost
+      delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
       debug:
         msg: "Consolidated report created: /var/tmp/server-findings/monthly_linux_health_report.txt"

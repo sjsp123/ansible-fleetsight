@@ -216,7 +216,7 @@ A heuristics dashboard over a selectable time window (1h/24h/7d/30d):
 **What it's for:** a read-only view of the whole fleet's inventory and
 per-host diagnostics — patch status, disk usage, running processes,
 service health, hardware facts, and config-file drift — without
-logging into every server by hand.
+logging into 160+ servers by hand.
 
 ### Fleet overview
 

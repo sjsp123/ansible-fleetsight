@@ -8,7 +8,7 @@
 
 - name: Generate a run timestamp for this host
   ansible.builtin.set_fact:
-    linuxdb_report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+    linuxdb_report_timestamp: "{{ lookup('pipe', 'TZ=Europe/London date +%Y%m%d_%H%M%S') }}"
 
 - name: Ensure sysstat is present (iostat for svr_check.sh DISK_IO)
   ansible.builtin.package:
@@ -25,7 +25,7 @@
   loop: "{{ linuxdb_reports_checks }}"
   loop_control:
     label: "{{ item.key }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
 
 - name: Copy check scripts to the managed host
   ansible.builtin.copy:
@@ -61,7 +61,7 @@
   loop: "{{ linuxdb_report_raw.results }}"
   loop_control:
     label: "{{ item.item.key }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
 
 - name: Record each check's exit code alongside its output
   ansible.builtin.copy:
@@ -71,7 +71,7 @@
   loop: "{{ linuxdb_report_raw.results }}"
   loop_control:
     label: "{{ item.item.key }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
 
 - name: Point 'latest' at this run for each check
   ansible.builtin.copy:
@@ -81,7 +81,7 @@
   loop: "{{ linuxdb_reports_checks }}"
   loop_control:
     label: "{{ item.key }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
 
 - name: Remove check scripts from the managed host
   ansible.builtin.file:
@@ -104,5 +104,5 @@
   loop: "{{ linuxdb_reports_checks }}"
   loop_control:
     label: "{{ item.key }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
   changed_when: false

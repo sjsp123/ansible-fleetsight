@@ -1,0 +1,13 @@
+---
+# host_vars/admin1.lab.example.com.yml — real host properties for the
+# central rsyslog collector.
+#
+# rsyslog_collector_advertise_host is the address OTHER hosts use to
+# reach the collector (required by roles/rsyslog_client — without it
+# every client would try to forward logs to itself).
+#
+# It lives here in host_vars rather than on the inventory line so the
+# inventory file stays context-free: any control node (admin1 CLI or
+# the AAP 2.7 controller on aap27) executes against the same
+# inventory identically. See inventory.ini header for the design rules.
+rsyslog_collector_advertise_host: admin1.lab.example.com

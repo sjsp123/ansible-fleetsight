@@ -26,12 +26,12 @@
       remove them from config_snapshot_files, or adjust the denylist
       if this is a genuine false positive.
     success_msg: "config_snapshot: no configured paths matched the denylist."
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
   run_once: true
 
 - name: config_snapshot | generate run timestamp
   ansible.builtin.set_fact:
-    config_snapshot_run_ts: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+    config_snapshot_run_ts: "{{ lookup('pipe', 'TZ=Europe/London date +%Y%m%d_%H%M%S') }}"
   run_once: true
 
 - name: config_snapshot | build path-to-slug pairs
@@ -52,7 +52,7 @@
   loop: "{{ config_snapshot_pairs }}"
   loop_control:
     label: "{{ item[1] }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
 
 - name: config_snapshot | record the source path for each slug (sidecar, overwritten every run)
   ansible.builtin.copy:
@@ -62,7 +62,7 @@
   loop: "{{ config_snapshot_pairs }}"
   loop_control:
     label: "{{ item[1] }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
 
 - name: config_snapshot | stat each configured path on the managed host
   ansible.builtin.stat:
@@ -95,7 +95,7 @@
   loop: "{{ config_snapshot_slurps.results }}"
   loop_control:
     label: "{{ item.item.item[0] | default('n/a') }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
   when: item is not skipped and item.content is defined
 
 - name: config_snapshot | write sha256 sidecar for existing files
@@ -108,7 +108,7 @@
   loop: "{{ config_snapshot_slurps.results }}"
   loop_control:
     label: "{{ item.item.item[0] | default('n/a') }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
   when: item is not skipped and item.content is defined
 
 - name: config_snapshot | write missing-marker for paths that don't exist or aren't a regular file
@@ -121,7 +121,7 @@
   loop: "{{ config_snapshot_stats.results }}"
   loop_control:
     label: "{{ item.item[0] }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
   when: not (item.stat.exists and item.stat.isreg)
 
 - name: config_snapshot | update the "latest" pointer for every configured path
@@ -132,7 +132,7 @@
   loop: "{{ config_snapshot_pairs }}"
   loop_control:
     label: "{{ item[1] }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
 
 - name: config_snapshot | prune old runs beyond config_snapshot_keep_runs, per slug
   ansible.builtin.shell: >-
@@ -149,6 +149,6 @@
   loop: "{{ config_snapshot_pairs }}"
   loop_control:
     label: "{{ item[1] }}"
-  delegate_to: localhost
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
   changed_when: false
   failed_when: false

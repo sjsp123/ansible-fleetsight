@@ -1,43 +1,11 @@
-# Ansible Fleetsight
+# ansible_operations
 
-Ansible roles and playbooks for operating a fleet of RHEL Linux hosts —
-centralized logging with searchable log insights, custom fleet and log
-dashboards, monitoring & alerting, patch management, IdM/FreeIPA health
-checks, and a process-lineage tracer.
-
-Everything is built to run from **RHEL's own BaseOS/AppStream
-repositories only** — no EPEL, no third-party repos — so the fleet
-patches cleanly via `dnf update` on any RHEL host, and the dashboards
-are pure-stdlib Python (no web frameworks, no JavaScript, no extra
-packages on managed hosts).
-
-## What it offers
-
-- **Centralized logging** — every host forwards syslog + journald to one
-  collector (rsyslog over TCP with on-disk retry queues), landing in
-  flat files *and* a PostgreSQL database for fast search
-- **LinuxDB dashboard** — fleet overview at a glance: patch status,
-  reboot-required, service health, NTP sync, SELinux mode, hardware
-  inventory, config-file snapshots, and per-host diagnostic history —
-  a read-only, zero-JavaScript web UI
-- **Log Search + Insights UI** — full-text and regex search across the
-  fleet's logs, plus heuristic alert triage (genuine / review / noise)
-  over auth failures, sudo activity, and top offending sources
-- **Monitoring & alerting** — disk space, chrony/NTP, IdM health,
-  service failures, host availability, and a log-severity alerter:
-  independent background mechanisms that email you the moment something
-  needs attention
-- **Patch management** — batched, reboot-aware `dnf` updates with
-  inventory-order serial rollout
-- **IdM/FreeIPA integration** — scheduled `ipa-healthcheck` runs on the
-  realm servers, fed into the dashboards
-- **lineage** — a stdlib-only process causality tracer: "why is this
-  running?" for any process, port, open file, or container (inspired by
-  [pranshuparmar/witr](https://github.com/pranshuparmar/witr))
-- **Idempotent Ansible throughout** — one playbook per function,
-  `ansible_*.sh` wrapper scripts for the daily flows, and pre-flight
-  checklists; every component is deployed by, and re-deployable from,
-  the playbooks in this repo
+Ansible roles and playbooks for managing a RHEL fleet (home lab):
+centralized logging, IdM health checks, host reporting, patching, and
+general operational scripts. Everything here is built to run from
+**RHEL's own BaseOS/AppStream repositories only** — no EPEL, no
+third-party repos — so it patches cleanly via `dnf update` on any RHEL
+host.
 
 ## Requirements
 
@@ -130,10 +98,15 @@ reference for what each dashboard looks like.
 The repo currently drives one real environment — the home lab — whose
 checkout tracks `main` directly (`git pull origin main`).
 
+Earlier this repo also drove a second, work PoC environment from a
+parallel `work` branch, with a two-branch promotion model between
+them. That engagement has ended: the `work` branch and its
+environment-specific files were removed (git history preserves them if
+they're ever needed again).
+
 **Environment-specific settings live in `group_vars/homelab.yml`**,
-applied automatically to hosts the local, gitignored `inventory` file
-puts in the `[homelab]` group (see `inventory.example.ini`
-"Environment group"). It currently covers the four TLS/auth toggles
+applied automatically to hosts the canonical, committed
+[`inventory.ini`](inventory.ini) puts in the `[homelab]` group. It currently covers the four TLS/auth toggles
 for `log_search_ui` and `linuxdb_dashboard` (on) and the lab's NTP
 topology; add more variables as other settings turn out to need to
 differ.
@@ -347,20 +320,17 @@ admin1.lab.example.com
 servers
 ```
 
-A fuller starting point, including the `ansible_connection=local`
-collector case and the `[servers]` group most other playbooks in this
-repo target, is at [`inventory.example.ini`](inventory.example.ini) —
-copy it to `inventory` (gitignored, so your real hostnames never get
-committed) and fill in your own hosts:
-
-```bash
-cp inventory.example.ini inventory
-```
-
-If the collector is `localhost`/`ansible_connection=local`, you **must**
-set `rsyslog_collector_advertise_host` on that same inventory line to its
-real address — otherwise every client tries to forward to itself. See
-`roles/rsyslog_client/README.md` for the full explanation.
+The lab's real inventory is committed at [`inventory.ini`](inventory.ini)
+— it is the single source of truth for both execution paths: local CLI
+runs on the collector and the AAP 2.7 controller on aap27, whose
+"lab-infra" inventory is sourced from this project file. The inventory
+is context-free: hosts are FQDNs only, no `ansible_connection=local`
+anywhere — even the collector is managed over SSH, so any control node
+executes against it identically. Per-host properties live in
+`host_vars/` (see `host_vars/admin1.lab.example.com.yml` for
+`rsyslog_collector_advertise_host` — required by `roles/rsyslog_client`;
+without it every client tries to forward logs to itself — see that
+role's README for the full explanation).
 
 If you use any of the optional site-specific host-check columns (license
 manager, HPE ProLiant serials, an internal docs server, custom NTP
@@ -945,17 +915,3 @@ the interactive SSH result to see if they actually differ.
 - [Red Hat Developer: Discover packaging parallel database streams in RHEL 10](https://developers.redhat.com/articles/2025/03/11/discover-packaging-parallel-database-streams-rhel-10)
 - [rsyslog: Encrypting Syslog Traffic with TLS (SSL)](https://docs.rsyslog.com/doc/tutorials/tls.html)
 - [FreeIPA: Certmonger and ipa-getcert usage](https://www.freeipa.org/page/Certmonger)
-
-## License
-
-MIT — see [LICENSE](LICENSE).
-
-## Acknowledgements
-
-- [pranshuparmar/witr](https://github.com/pranshuparmar/witr) (Apache-2.0) —
-  the inspiration for `lineage`, the fleet's process-causality tracer,
-  reimplemented here in pure Python. The upstream project is well worth
-  a look in its own right.
-- Red Hat's `rhel-system-roles` collection — the `timesync` deployment
-  path is built on Red Hat's own `timesync` role.
-- The Ansible and rsyslog projects, which the whole pipeline stands on.

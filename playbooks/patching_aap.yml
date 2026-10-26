@@ -1,0 +1,21 @@
+---
+# AAP controller-host patching with pre/post platform health checks.
+#
+# The controller host is patched WITHOUT auto-reboot (policy — a reboot
+# would kill the job performing it); needs-restarting is reported for a
+# manual bounce. Pre/post health gates verify the platform before and
+# after the patch.
+#
+# AAP job template: patch-aap-health (Limit: aap_servers)
+# CLI:
+#   ansible-playbook playbooks/patching_aap.yml \
+#     -e target_host=aap27.lab.example.com
+
+- name: AAP controller-host patching with pre/post platform health checks
+  hosts: "{{ target_host | mandatory }}"
+  become: true
+  gather_facts: true
+  serial: 1
+
+  roles:
+    - role: patching_aap

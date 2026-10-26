@@ -668,7 +668,7 @@ USERNAME_CAPTURE_PATTERN = r"for (?:invalid user )?([^ ]+) from"
 SSH_HAS_IP_PATTERN = r"from [0-9]{1,3}(\.[0-9]{1,3}){3}"
 
 # sudo's own log line shape (message text after the "sudo:" syslogtag),
-# e.g. "alice : TTY=pts/0 ; PWD=/home/alice ; USER=root ; COMMAND=/usr/bin/
+# e.g. "sarb : TTY=pts/0 ; PWD=/home/sarb ; USER=root ; COMMAND=/usr/bin/
 # systemctl restart httpd" - captures who ran sudo, which account they
 # became, and the command verbatim. Only ever applied to rows already
 # filtered to syslogtag ILIKE 'sudo%' AND message ILIKE '%COMMAND=%' (the
@@ -680,7 +680,7 @@ SUDO_TARGET_USER_CAPTURE_PATTERN = r"USER=(\S+)"
 SUDO_COMMAND_CAPTURE_PATTERN = r"COMMAND=(.+)$"
 
 # su's own PAM session line, e.g. "pam_unix(su-l:session): session opened
-# for user root(uid=0) by alice(uid=1000)". Unlike sudo, su has no COMMAND=
+# for user root(uid=0) by sarb(uid=1000)". Unlike sudo, su has no COMMAND=
 # equivalent - it just opens an interactive shell as the target user, so
 # there's no per-command field to extract here, only who invoked su and
 # who they became. Only ever applied to rows already filtered to a

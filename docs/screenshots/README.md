@@ -3,9 +3,9 @@
 These screenshots were captured from the two web dashboards this repo
 deploys (`roles/log_search_ui` and `roles/linuxdb_dashboard`), running
 against a 5-host home lab (`admin1`, `aap1`, `client1`, `idm1`, `nfs1`
-— all RHEL 10.2). They're included as a "what you get" reference: the
-same roles and playbooks deploy the same dashboards against any fleet
-size.
+— all RHEL 10.2). They're included here as a "what we're going to
+build" reference for the work rollout: same roles, same playbooks,
+pointed at the work fleet instead of the lab.
 
 Both apps follow the same build philosophy used throughout this repo:
 pure Python standard library (`wsgiref.simple_server`, no Flask, no
@@ -22,10 +22,10 @@ own `README.md` for full detail (`roles/log_search_ui/README.md`,
 
 Both dashboards sit behind a login before any data is shown — this is
 the browser's native sign-in prompt guarding `localhost:8082`
-(LinuxDB). This is also where Kerberos/AD-backed dashboard
-authentication (see the Kerberos authentication mode notes in each
-role's README) plugs in, so access can be tied to each engineer's
-existing domain identity rather than a locally-managed password.
+(LinuxDB). For the work rollout this is where the Kerberos/AD-backed
+dashboard authentication (see the separate Kerberos Dashboard Auth
+rollout notes) plugs in, so access is tied to each engineer's existing
+domain identity rather than a locally-managed password.
 
 ## Log Search UI (`roles/log_search_ui`)
 
@@ -158,10 +158,10 @@ actual captured content — a lightweight drift-detection view that
 flags "this file used to exist / used to look different" without
 needing a full configuration-management diff tool.
 
-## Why this matters
+## Why this matters for the work rollout
 
 Together these two dashboards turn "SSH into each box and grep/df/ps
-by hand across every server" into two web pages: one for point-in-time
+by hand across 160+ servers" into two web pages: one for point-in-time
 fleet state and per-host drill-down (LinuxDB), one for searching and
 spotting patterns across everyone's logs over time (Log Search). Both
 are already gated behind sign-in, both are pure-stdlib/BaseOS-only

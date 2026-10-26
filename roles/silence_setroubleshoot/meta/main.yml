@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   role_name: silence_setroubleshoot
-  author: sjsp123
+  author: Sarb Panesar
   description: >-
     Silence setroubleshootd AVC noise (Red Hat KB 2762771) and optionally
     disable SELinux entirely on non-production hosts.

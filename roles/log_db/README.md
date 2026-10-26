@@ -173,7 +173,7 @@ Never commit real passwords to `group_vars/all/log_db.yml` in plain text.
     - role: log_db
 ```
 
-## Scaling notes for large fleets
+## Scaling notes for ~160 servers (work rollout)
 
 - The default schema/indexes comfortably handle a single fleet's syslog
   volume on modest hardware, but at that scale watch disk growth closely -

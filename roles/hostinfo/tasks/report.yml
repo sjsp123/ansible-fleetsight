@@ -25,7 +25,7 @@
 
 - name: Generate timestamp
   set_fact:
-    report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+    report_timestamp: "{{ lookup('pipe', 'TZ=Europe/London date +%Y%m%d_%H%M%S') }}"
   delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
 
 - name: Generate CSV report

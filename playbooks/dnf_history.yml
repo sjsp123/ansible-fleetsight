@@ -1,21 +1,11 @@
 ---
 - name: Report latest dnf history transaction to CSV
-  hosts: "{{ target_host }}"
+  # target_host comes from extra-vars (CLI -e, wrapper script, or an AAP
+  # controller survey answer). vars_prompt was removed 2026-10-19: without
+  # a TTY (cron, AAP EE) it blocks forever waiting on stdin.
+  hosts: "{{ target_host | default('all') }}"
   become: true
   gather_facts: true
-
-  vars_prompt:
-    - name: target_host
-      prompt: "Enter target host or inventory group"
-      private: no
-      default: "all"
-      # default lets an interactive run just press Enter for the common
-      # case. For unattended/cron runs, ALWAYS pass -e target_host=all
-      # (or a specific group) explicitly rather than relying on this
-      # default alone - Ansible skips vars_prompt entirely when the var
-      # is already supplied via --extra-vars, which is the reliable,
-      # version-proof way to guarantee a non-interactive run never blocks
-      # waiting on a stdin prompt that cron can't answer.
 
   vars:
     csv_file: /tmp/dnf_history_report.csv
@@ -98,7 +88,7 @@
         create: true
         mode: "0644"
         state: present
-      delegate_to: localhost
+      delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
       become: false
       run_once: true
 
@@ -109,6 +99,6 @@
         mode: "0644"
         line: "{{ inventory_hostname }},{{ dnf_date_final }}:{{ dnf_time_final }},{{ installed_count }},{{ updated_count }},{{ removed_count }}"
         create: true
-      delegate_to: localhost
+      delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
       become: false
       throttle: 1

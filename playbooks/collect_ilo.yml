@@ -211,7 +211,7 @@
 
     - name: Generate CSV report
       run_once: true
-      delegate_to: localhost
+      delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
       copy:
         dest: "{{ report_file }}"
         mode: "0644"
@@ -223,6 +223,6 @@
 
     - name: Show report location
       run_once: true
-      delegate_to: localhost
+      delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
       debug:
         msg: "Inventory written to {{ report_file }}"

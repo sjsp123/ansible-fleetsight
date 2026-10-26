@@ -1,0 +1,27 @@
+---
+# Knobs for the IdM patching role. See README.md for the port notes.
+
+# IdM masters get a long return window and a settle delay — directory
+# services, Kerberos, and the CA (pki-tomcatd) take minutes, not seconds.
+patching_idm_reboot_timeout: 3600
+patching_idm_post_reboot_delay: 60
+patching_idm_pause_after_reboot_minutes: 5
+
+# ipactl status keywords for the services that must be RUNNING after a
+# patch+reboot. Keywords (not full lines) on purpose: ipactl's output
+# format shifts slightly across IPA versions ("Directory Service:
+# RUNNING" vs "Directory Service (dirsrv): RUNNING"). 'named' is required
+# because idm1 runs integrated DNS — remove it for IdM servers without it.
+patching_idm_required_services:
+  - "Directory Service"
+  - "krb5kdc"
+  - "kadmin"
+  - "httpd"
+  - "ipa-custodia"
+  - "pki-tomcatd"
+  - "ipa-otpd"
+  - "named"
+
+# Patching history: rows are written by the shared patching_history role
+# (one CSV for all patching roles, on the collector).
+patching_idm_history_enabled: true

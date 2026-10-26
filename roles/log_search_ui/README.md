@@ -6,7 +6,7 @@ Deploys a small, dependency-free web front end for searching the log_db
 database (`roles/log_db`) by message pattern, host, tag, severity, and
 date range — so log messages across the fleet can be searched from one
 place instead
-of grepping flat files on (or across) hundreds of servers. Intended to run on
+of grepping flat files on (or across) 160+ servers. Intended to run on
 the same host as `roles/log_db` (the `log_collector` inventory group).
 See `playbooks/centralized_logging.yml`.
 
@@ -178,7 +178,7 @@ without writing an ad hoc query by hand every time:
   `log_search_ui_insights_top_su_users` rows). Unlike sudo, `su` has no
   per-command log of its own — its own PAM session-open line (e.g.
   `pam_unix(su-l:session): session opened for user root(uid=0) by
-  alice(uid=1000)`) only records who switched to who, since `su` just
+  sarb(uid=1000)`) only records who switched to who, since `su` just
   opens an interactive shell rather than logging each command run
   afterwards — so this table has no "Command" column, and there's no
   equivalent "su commands run" KPI card (a bare-tag `su%` filter would

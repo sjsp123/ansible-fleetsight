@@ -8,6 +8,13 @@ collections:
     version: ">=1.5.0"
   - name: community.postgresql
     version: ">=3.0.0"
+  # Pinned <9.0.0: 9.x+ targets newer ansible-core than the AppStream
+  # ansible-core 2.16 on this lab's control nodes (and than the RHEL-packaged
+  # ansible-core generally). playbooks/standardise_dns.yml uses
+  # community.general.nmcli. RHEL 10 does not ship a collection RPM for
+  # community.general, unlike RHEL 9.
+  - name: community.general
+    version: "<9.0.0"
 
 # redhat.rhel_system_roles is NOT listed above - it isn't on public
 # galaxy.ansible.com at all (confirmed: the API returns zero results for

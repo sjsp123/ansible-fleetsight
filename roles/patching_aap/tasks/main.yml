@@ -1,0 +1,217 @@
+---
+# AAP controller-host patching with platform pre/post health checks.
+#
+# Checks assembled from Red Hat's documented verification points for
+# containerized AAP: installer preflight requirements (host resources,
+# registration), post-install verification (rootless containers running,
+# zero failed systemd user units, web UI answering), and the maintain/
+# upgrade-era health gates. See this role's README.md for sources.
+#
+# NOTE on privileges: this playbook runs with become: true, but every
+# podman / systemctl --user task runs as the SERVICE ACCOUNT (rootless
+# containers live in that user's storage). Those tasks carry
+# become: false explicitly — root's podman store is a different, empty
+# universe and will falsely report "no containers".
+
+# Best-effort gate: systemctl --user needs the user-scope dbus bus
+# (/run/user/<uid>/bus), which a non-interactive SSH session may not
+# provide. The hard health signal is the container-roster check below —
+# a failed user unit leaves its container dead or exited.
+- name: PRE — check for failed systemd user units (best-effort)
+  ansible.builtin.command: systemctl --user list-units --failed --no-legend
+  become: false
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid | default(1000) }}"
+  register: patching_aap_pre_failed_units
+
+- name: PRE — report failed user units (zero expected when the bus is reachable)
+  ansible.builtin.debug:
+    msg: >-
+      {{ (patching_aap_pre_failed_units.rc == 0) | ternary(
+           'failed units: ' ~ (patching_aap_pre_failed_units.stdout | default('') | trim),
+           'user bus unreachable over non-interactive SSH — skipped (containers check covers this)') }}
+
+- name: PRE — assert free disk space on / and /home (installer preflight)
+  ansible.builtin.assert:
+    that:
+      - (ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | list | first | int) >= patching_aap_min_free_bytes
+      - (ansible_mounts | selectattr('mount', 'equalto', '/home') | map(attribute='size_available') | list | first | int) >= patching_aap_min_free_bytes
+    success_msg: "PRE: disk free space OK (>= {{ patching_aap_min_free_bytes }} bytes on / and /home)"
+
+- name: PRE — list running AAP containers (rootless podman, as the service account)
+  ansible.builtin.command: podman ps --format "{{ podman_ps_fmt }}"
+  become: false
+  changed_when: false
+  check_mode: false
+  vars:
+    podman_ps_fmt: !unsafe '{{.Names}}|{{.Status}}'
+  register: patching_aap_pre_podman
+
+- name: PRE — assert every expected AAP container is running
+  ansible.builtin.assert:
+    that:
+      - patching_aap_pre_podman.stdout_lines | select('search', '^' ~ item ~ '\\|') | list | length > 0
+    success_msg: "PRE: container running: {{ item }}"
+  loop: "{{ patching_aap_expected_containers }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: PRE — probe the platform gateway
+  ansible.builtin.uri:
+    url: "{{ patching_aap_gateway_url }}"
+    validate_certs: false
+    status_code: "{{ patching_aap_gateway_ok_status }}"
+  become: false
+  register: patching_aap_pre_gateway
+
+- name: PRE — gateway answering
+  ansible.builtin.debug:
+    msg: "PRE: gateway {{ patching_aap_gateway_url }} responded {{ patching_aap_pre_gateway.status }}"
+
+# --- Patch -----------------------------------------------------------------
+- name: Refresh dnf metadata and list pending updates (no changes applied)
+  ansible.builtin.command: dnf -q check-update --refresh
+  changed_when: false
+  failed_when: patching_aap_refresh.rc not in [0, 100]
+  check_mode: false
+  register: patching_aap_refresh
+
+- name: Record pending update count
+  ansible.builtin.set_fact:
+    patching_aap_pending: "{{ 0 if patching_aap_refresh.rc == 100 else (patching_aap_refresh.stdout_lines | length) }}"
+
+# check-update output is one clean NEVRA per line — the packages this
+# run patched (same compact-list convention as the other patching roles).
+- name: Show the packages that were patched (compact list)
+  ansible.builtin.debug:
+    msg: "{{ patching_aap_refresh.stdout_lines }}"
+  when: patching_aap_refresh.rc == 0
+
+- name: Update all installed packages
+  ansible.builtin.dnf:
+    name: '*'
+    state: latest
+    update_cache: true
+  register: patching_aap_update
+
+- name: Check whether a reboot is required
+  ansible.builtin.command: needs-restarting -r
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  register: patching_aap_reboot_required
+
+- name: Report reboot requirement (manual event — never auto-reboot the controller)
+  ansible.builtin.debug:
+    msg: >-
+      needs-restarting reports a reboot is REQUIRED on the AAP controller host.
+      Policy: bounce aap27 manually, then re-run this template to re-verify
+      platform health. (Set patching_aap_reboot_enabled=true to override.)
+  when: patching_aap_reboot_required.rc == 1
+
+- name: Reboot if explicitly enabled (policy flag — default off)
+  ansible.builtin.reboot:
+    msg: "Reboot initiated by Ansible (AAP controller host patching)"
+    connect_timeout: 5
+    reboot_timeout: "{{ patching_aap_reboot_timeout }}"
+    post_reboot_delay: "{{ patching_aap_post_reboot_delay }}"
+    test_command: whoami
+  when: patching_aap_reboot_enabled | bool
+
+# --- POST-verification (same gates, re-asserted after the patch) ------------
+- name: POST — list running AAP containers
+  ansible.builtin.command: podman ps --format "{{ podman_ps_fmt }}"
+  become: false
+  changed_when: false
+  check_mode: false
+  vars:
+    podman_ps_fmt: !unsafe '{{.Names}}|{{.Status}}'
+  register: patching_aap_post_podman
+
+- name: POST — assert every expected AAP container is still running
+  ansible.builtin.assert:
+    that:
+      - patching_aap_post_podman.stdout_lines | select('search', '^' ~ item ~ '\\|') | list | length > 0
+    success_msg: "POST: container running: {{ item }}"
+  loop: "{{ patching_aap_expected_containers }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: POST — check for failed systemd user units (best-effort)
+  ansible.builtin.command: systemctl --user list-units --failed --no-legend
+  become: false
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid | default(1000) }}"
+  register: patching_aap_post_failed_units
+
+- name: POST — report failed user units (zero expected when the bus is reachable)
+  ansible.builtin.debug:
+    msg: >-
+      {{ (patching_aap_post_failed_units.rc == 0) | ternary(
+           'failed units: ' ~ (patching_aap_post_failed_units.stdout | default('') | trim),
+           'user bus unreachable over non-interactive SSH — skipped (containers check covers this)') }}
+
+- name: POST — probe the platform gateway
+  ansible.builtin.uri:
+    url: "{{ patching_aap_gateway_url }}"
+    validate_certs: false
+    status_code: "{{ patching_aap_gateway_ok_status }}"
+  become: false
+  register: patching_aap_post_gateway
+
+- name: POST — gateway answering
+  ansible.builtin.debug:
+    msg: "POST: gateway {{ patching_aap_gateway_url }} responded {{ patching_aap_post_gateway.status }}"
+
+# --- History (shared patching_history role) ---------------------------------
+- name: Get package counts from the last dnf transaction
+  ansible.builtin.command: dnf history info last
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: patching_aap_update is changed
+  register: patching_aap_dnf_history
+
+- name: Count Installed packages in the last transaction
+  ansible.builtin.shell: echo "{{ patching_aap_dnf_history.stdout }}" | grep -cE '^[[:space:]]+Install[[:space:]]+'
+  register: patching_aap_installed_raw
+  changed_when: false
+  failed_when: false
+  when: patching_aap_update is changed
+
+- name: Count Updated packages in the last transaction
+  ansible.builtin.shell: echo "{{ patching_aap_dnf_history.stdout }}" | grep -cE '^[[:space:]]+Upgrade[[:space:]]+'
+  register: patching_aap_updated_raw
+  changed_when: false
+  failed_when: false
+  when: patching_aap_update is changed
+
+- name: Count Removed packages in the last transaction
+  ansible.builtin.shell: echo "{{ patching_aap_dnf_history.stdout }}" | grep -cE '^[[:space:]]+Removed[[:space:]]+'
+  register: patching_aap_removed_raw
+  changed_when: false
+  failed_when: false
+  when: patching_aap_update is changed
+
+- name: Normalize counts to integers (zero when no packages changed)
+  ansible.builtin.set_fact:
+    patching_aap_installed: "{{ patching_aap_installed_raw.stdout | default('0') | int }}"
+    patching_aap_updated: "{{ patching_aap_updated_raw.stdout | default('0') | int }}"
+    patching_aap_removed: "{{ patching_aap_removed_raw.stdout | default('0') | int }}"
+
+- name: Record the patching run in the shared history CSV (with transaction detail)
+  ansible.builtin.include_role:
+    name: patching_history
+  vars:
+    patching_history_fields:
+      - "{{ patching_aap_installed }}"
+      - "{{ patching_aap_updated }}"
+      - "{{ patching_aap_removed }}"
+    patching_history_detail: "{{ patching_aap_dnf_history.stdout | default('') }}"
+  when: patching_aap_history_enabled | default(true) | bool

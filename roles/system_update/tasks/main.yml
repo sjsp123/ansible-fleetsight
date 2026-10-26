@@ -176,3 +176,71 @@
       reboot_performed={{ (system_update_reboot_result is defined) and
         (system_update_reboot_result.changed | default(false)) }}
   tags: [update]
+
+# --- Patching history (shared patching_history role) -------------------
+- name: Get package counts from the last dnf transaction
+  ansible.builtin.command: dnf history info last
+  changed_when: false
+  failed_when: false
+  when:
+    - ansible_pkg_mgr == 'dnf'
+    - system_update_changed | default(false) | bool
+  register: system_update_dnf_history
+  tags: [update]
+
+  # dnf history info lists ONE LINE PER PACKAGE under each action heading
+  # — counts are line-counts (pattern proven in playbooks/dnf_history.yml)
+- name: Count Installed packages in the last transaction
+  ansible.builtin.shell: echo "{{ system_update_dnf_history.stdout }}" | grep -cE '^[[:space:]]+Install[[:space:]]+'
+  register: system_update_installed_raw
+  changed_when: false
+  failed_when: false
+  when: system_update_dnf_history is not skipped
+  tags: [update]
+
+- name: Count Updated packages in the last transaction
+  ansible.builtin.shell: echo "{{ system_update_dnf_history.stdout }}" | grep -cE '^[[:space:]]+Upgrade[[:space:]]+'
+  register: system_update_updated_raw
+  changed_when: false
+  failed_when: false
+  when: system_update_dnf_history is not skipped
+  tags: [update]
+
+- name: Count Removed packages in the last transaction
+  ansible.builtin.shell: echo "{{ system_update_dnf_history.stdout }}" | grep -cE '^[[:space:]]+Removed[[:space:]]+'
+  register: system_update_removed_raw
+  changed_when: false
+  failed_when: false
+  when: system_update_dnf_history is not skipped
+  tags: [update]
+
+- name: Normalize counts to integers (zero when no packages changed)
+  ansible.builtin.set_fact:
+    system_update_installed: "{{ system_update_installed_raw.stdout | default('0') | int }}"
+    system_update_updated: "{{ system_update_updated_raw.stdout | default('0') | int }}"
+    system_update_removed: "{{ system_update_removed_raw.stdout | default('0') | int }}"
+  tags: [update]
+
+# Job-output evidence: the full transaction (packages, old→new versions,
+# user, return code) appears in the job record itself — retrievable via
+# joblog.sh. Only shown when something actually changed.
+# The clean pending-packages list (printed pre-update) doubles as the
+# record of what this run patched; full old→new version detail lives in
+# the audit file on the collector.
+- name: Show the packages that were patched (compact list)
+  ansible.builtin.debug:
+    msg: "{{ system_update_pending_dnf.stdout_lines | default(['(none pending)']) }}"
+  when: system_update_changed | default(false) | bool
+  tags: [update]
+
+- name: Record the patching run in the shared history CSV
+  ansible.builtin.include_role:
+    name: patching_history
+  vars:
+    patching_history_fields:
+      - "{{ system_update_installed }}"
+      - "{{ system_update_updated }}"
+      - "{{ system_update_removed }}"
+    patching_history_detail: "{{ system_update_dnf_history.stdout | default('') }}"
+  when: system_update_history_enabled | default(true) | bool
+  tags: [update]

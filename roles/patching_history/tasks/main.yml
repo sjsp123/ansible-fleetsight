@@ -1,0 +1,67 @@
+---
+# Shared patching-history writer.
+#
+# Called (via include_role) by every patching role after its update/reboot
+# work, so all patching runs land in ONE CSV on the collector regardless
+# of which role ran. Header is written exactly once (stat-gated), rows
+# are appended thereafter.
+#
+# Caller contract (vars):
+#   patching_history_fields : list of values for the columns after
+#                             Hostname/Date (strings/ints, comma-free)
+# Optional overrides:
+#   patching_history_host   : defaults to inventory_hostname
+#   patching_history_path   : defaults to /linuxdb/patching/ansible_patching_history.csv
+#
+- name: Ensure the patching history directory exists on the collector
+  ansible.builtin.file:
+    path: "{{ patching_history_path | dirname }}"
+    state: directory
+    mode: "0755"
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+  throttle: 1
+
+- name: Check for an existing history file
+  ansible.builtin.stat:
+    path: "{{ patching_history_path }}"
+  register: patching_history_file
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+  throttle: 1
+
+- name: Write the CSV header when creating the history file
+  ansible.builtin.copy:
+    content: "{{ patching_history_header }}\n"
+    dest: "{{ patching_history_path }}"
+    mode: "0644"
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+  when: not patching_history_file.stat.exists
+  throttle: 1
+
+# throttle: 1 is load-bearing: concurrent appends to one delegated file
+# are read-modify-write operations and race each other — rows get lost
+# (observed: a host's row vanished under serial: 30% parallelism).
+- name: Append this run to the patching history CSV
+  ansible.builtin.lineinfile:
+    path: "{{ patching_history_path }}"
+    line: "{{ ([patching_history_host, patching_history_date] + patching_history_fields) | join(',') }}"
+    insertbefore: EOF
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+  throttle: 1
+
+- name: Ensure the per-host detail directory exists on the collector
+  ansible.builtin.file:
+    path: "{{ patching_history_path | dirname }}/detail/{{ patching_history_host }}"
+    state: directory
+    mode: "0755"
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+  throttle: 1
+  when: patching_history_detail | length > 0
+
+- name: Save the full transaction detail for audit (when provided)
+  ansible.builtin.copy:
+    content: "{{ patching_history_detail }}"
+    dest: "{{ patching_history_path | dirname }}/detail/{{ patching_history_host }}/{{ patching_history_file_ts }}.txt"
+    mode: "0644"
+  delegate_to: "{{ groups.get('log_collector', ['localhost']) | first }}"
+  throttle: 1
+  when: patching_history_detail | length > 0
