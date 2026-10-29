@@ -161,7 +161,7 @@ needing a full configuration-management diff tool.
 ## Why this matters for the work rollout
 
 Together these two dashboards turn "SSH into each box and grep/df/ps
-by hand across 160+ servers" into two web pages: one for point-in-time
+by hand across multiple servers" into two web pages: one for point-in-time
 fleet state and per-host drill-down (LinuxDB), one for searching and
 spotting patterns across everyone's logs over time (Log Search). Both
 are already gated behind sign-in, both are pure-stdlib/BaseOS-only
