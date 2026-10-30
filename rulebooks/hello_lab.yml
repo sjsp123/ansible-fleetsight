@@ -1,0 +1,27 @@
+---
+# First EDA rulebook — webhook-triggered, observation only.
+#
+# Purpose: prove the EDA pipeline end-to-end (EDA project → decision
+# environment → activation → event received) before wiring actions that
+# change anything. This rulebook only PRINTS the event it receives.
+#
+# Test it: once the rulebook activation is enabled, POST to its webhook:
+#   curl -X POST <activation webhook URL> \
+#     -H 'Content-Type: application/json' \
+#     -d '{"message": "hello lab"}'
+#
+# Then watch the event in Rule Audit / the activation's history.
+
+- name: Webhook hello — first EDA rulebook (observation only)
+  hosts: all
+  sources:
+    - ansible.eda.webhook:
+        host: 0.0.0.0
+        port: 14776
+  rules:
+    - name: Log every hello event
+      condition:
+        event.payload.message is defined
+      action:
+        print_event:
+          pretty_print: true
