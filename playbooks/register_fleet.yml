@@ -1,0 +1,179 @@
+---
+# playbooks/register_fleet.yml
+#
+# Bulk-register hosts to a Red Hat Satellite 6.19 server via Global
+# Registration (Hosts -> Register Host generates the same command in the
+# UI; this playbook wraps it so re-registration is repeatable).
+#
+# Inventory expects:
+#   Run against whichever hosts should be registered, e.g.:
+#     ansible-playbook playbooks/register_fleet.yml --limit prod_fleet ...
+#   (or add a [satellite_fleet] group to inventory.ini and target it).
+#
+# Requirements:
+#   - ansible.builtin only.
+#   - Target hosts must be able to resolve and reach the Satellite FQDN
+#     on 443 (in this lab: the Fusion NAT VMs reach satellite.lab.example.com
+#     through the macOS IP-forwarding route; see build-diary-mini.md).
+#   - A fresh registration token. Generate one from the Satellite web UI:
+#     Hosts -> Register Host -> pick activation key -> General/Advanced
+#     -> Generate, then copy the Authorization: Bearer token out of the
+#     registration command. Tokens expire (~4h) and each Generate mints a
+#     new one - ALWAYS generate a fresh token per run. Treat it as a
+#     credential: pass it via extra-vars or a vaulted var file, never
+#     commit it.
+#
+# Usage:
+#   ansible-playbook playbooks/register_fleet.yml \
+#     --limit prod_fleet \
+#     -e reg_token="<paste-token-here>" \
+#     -e activation_keys=fleet-prod
+#
+#   # Non-force re-run (skips hosts that already pull content from this
+#   # Satellite - check is "dnf repolist -v Repo-baseurl contains pulp/content"):
+#   ansible-playbook playbooks/register_fleet.yml \
+#     --limit prod_fleet -e reg_token="..." -e reg_force=false
+#
+#   # Different Satellite / org / CV context:
+#   ansible-playbook playbooks/register_fleet.yml -e reg_token="..." \
+#     -e satellite_fqdn=satellite.lab.example.com -e activation_keys=fleet-dev
+#
+# What it does:
+#   1. Asserts a registration token was supplied.
+#   2. Skips registration when the host already serves content from the
+#      target Satellite and reg_force=false; with reg_force=true (default)
+#      it re-registers cleanly (subscription-manager --force under the
+#      hood, which also switches hosts currently registered to RHSM CDN).
+#   3. Runs the Global Registration curl|bash command (Insecure + Force
+#      flags by default: lab hosts have no Satellite CA in their trust
+#      store on first contact).
+#   4. Verifies: subscription-manager status = Registered, and
+#      dnf repolist -v Repo-baseurl contains the Satellite pulp/content URL.
+#   5. Insights warm-up: uploads once and clears any failed
+#      insights-client-results state. The results check can fail benignly
+#      immediately after registration - the advisor report does not exist
+#      until the first upload under the new identity has been processed
+#      (observed fleet-wide on the first Satellite registration, 02 Nov).
+#      Skip with -e insights_warmup=false.
+#
+# As-built (02 Nov 2026): client1.lab.example.com registered by hand first
+# to prove the flow (activation_keys=fleet-dev, Insecure + Force); the
+# remaining Fusion VMs then registered with fleet-prod after rhel-base
+# v1.0 was promoted to the Prod LCE. See labs/lab-03-hosts-and-rex.md in
+# the redhat-satellite-study-guide repo.
+
+- name: Register hosts to Satellite via Global Registration
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    satellite_fqdn: satellite.lab.example.com
+    activation_keys: fleet-prod
+    reg_force: true
+    reg_insecure: true
+    update_packages: false
+    insights_warmup: true
+
+  tasks:
+    - name: Assert registration token was supplied
+      ansible.builtin.assert:
+        that:
+          - reg_token is defined
+          - reg_token | length > 20
+        fail_msg: >-
+          Generate a fresh token in Satellite (Hosts -> Register Host ->
+          Generate) and pass it with -e reg_token="...". Tokens expire in
+          ~4h - never reuse an old one.
+
+    - name: Check whether host already serves content from this Satellite
+      # -v is required: plain `dnf repolist` prints only repo id/name, while
+      # -v adds Repo-baseurl lines that contain the Satellite pulp/content URL
+      ansible.builtin.command: dnf repolist --enabled -v
+      register: repolist_before
+      changed_when: false
+
+    - name: Register host (runs the same command the UI generates)
+      # reg_force may arrive as a k=v extra-var string ("false") - always
+      # pipe it through | bool, bare string truthiness would run registration
+      # even when the caller asked to skip
+      when: reg_force | bool or 'pulp/content' not in repolist_before.stdout
+      block:
+        - name: Run the Global Registration command
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail && curl --silent --show-error
+              {{ '--insecure' if reg_insecure | bool else '' }}
+              'https://{{ satellite_fqdn }}/register?activation_keys={{ activation_keys }}&download_utility=curl&{{ 'force=true&' if reg_force | bool else '' }}update_packages={{ update_packages | bool | lower }}'
+              --header 'Authorization: Bearer {{ reg_token }}' | bash
+          args:
+            executable: /bin/bash
+          register: reg_result
+          changed_when: reg_result.stdout is search('Successfully registered host')
+          no_log: true
+
+        - name: Show registration result summary
+          ansible.builtin.debug:
+            msg: >-
+              {{ reg_result.stdout_lines
+                 | select('match', 'Successfully registered host|Running registration|already registered')
+                 | list }}
+          no_log: true
+
+    - name: Verify subscription-manager status
+      ansible.builtin.command: subscription-manager status
+      register: sm_status
+      changed_when: false
+
+    - name: Verify repolist serves from Satellite
+      ansible.builtin.command: dnf repolist --enabled -v
+      register: repolist_after
+      changed_when: false
+
+    - name: Assert registration verified
+      ansible.builtin.assert:
+        that:
+          - "'Registered' in sm_status.stdout"
+          - "'pulp/content' in repolist_after.stdout"
+          - satellite_fqdn in repolist_after.stdout
+        fail_msg: >-
+          Registration did not verify. Check {{ satellite_fqdn }} reachability,
+          the activation key ({{ activation_keys }}) exists and has the CV
+          promoted to its LCE, and the token was fresh.
+        success_msg: >-
+          {{ inventory_hostname }} registered and serving content from
+          {{ satellite_fqdn }} (activation key: {{ activation_keys }}).
+
+    - name: Insights warm-up - one upload so the advisor report exists
+      when: insights_warmup | bool
+      ansible.builtin.command: insights-client
+      register: insights_upload
+      changed_when: "'Successfully uploaded' in insights_upload.stdout"
+      failed_when: false
+
+    - name: Insights warm-up - check advisor results
+      when: insights_warmup | bool
+      ansible.builtin.command: insights-client --check-results
+      register: insights_check
+      changed_when: false
+      failed_when: false
+
+    - name: Report Insights warm-up state
+      when: insights_warmup | bool
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Insights advisor report OK (on-prem via ' ~ satellite_fqdn ~ ')'
+             if insights_check.rc == 0 else
+             'Advisor report not ready yet - benign right after registration, self-heals on the next insights-client.timer run' }}
+
+    - name: Clear any failed insights-client-results state left by registration
+      when: insights_warmup | bool
+      # systemctl reset-failed via command: older ansible-core systemd module
+      # rejects state=reset-failed (only supports started/stopped/restarted/reloaded)
+      ansible.builtin.command: systemctl reset-failed insights-client-results.service
+      changed_when: false
+      failed_when: false
+
+    - name: Report final repo baseurls
+      ansible.builtin.debug:
+        msg: "{{ repolist_after.stdout_lines | select('search', 'Repo-baseurl.*pulp/content') | list }}"
