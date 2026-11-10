@@ -17,6 +17,24 @@
 # CLI:
 #   ansible-playbook playbooks/patching_idm_serial.yml \
 #     -e target_host=idm1.lab.example.com
+#
+# KNOWN ISSUE (10 Nov 2026, resolved) — RHEL 10.3 Tomcat 9→10.1 transition:
+#   The 10.3 AppStream moves Dogtag PKI from tomcat9 to tomcat 10.1
+#   (idm-pki-server el10_3 requires tomcat >= 10.1.36; the tomcat9 compat
+#   package ends Nov 2026). Plain `dnf update` CANNOT cross this boundary,
+#   and a partial-exclude approach (updating 389-ds-base/krb5-server under a
+#   pinned ipa-server) broke the KDC after reboot:
+#     krb5kdc: Unable to load 'ipadb.so': plugin symbol
+#     'kdb_function_table' not found
+#   (= el10_2 IPA KDB plugin vs el10_3 krb5 ABI — krb5-server/ipa-server
+#   version skew, NOT data loss).
+#   Resolution (documented path, Red Hat Developer Apr 2026):
+#     dnf swap tomcat9 tomcat --allowerasing
+#     dnf upgrade 'ipa-*' 'idm-*' '389-ds-*' --allowerasing
+#     reboot; then ipactl status + ipa-healthcheck (all 9 services RUNNING).
+#   Lesson: on IdM/KDC/CAS-type hosts, either exclude the WHOLE dependency
+#   family or perform the full documented stack migration — a pinned core
+#   package on updated runtime deps is the worst of both states.
 
 - name: Serial IdM patching with post-reboot service verification
   hosts: "{{ target_host | mandatory }}"
