@@ -7,6 +7,21 @@ general operational scripts. Everything here is built to run from
 third-party repos — so it patches cleanly via `dnf update` on any RHEL
 host.
 
+## Red Hat references — IdM/Tomcat 9→10.1 transition (incident 10 Nov 2026)
+
+The nightly `patch-idm-serial` run hit the AppStream boundary where RHEL 10.3 moves Dogtag PKI
+from `tomcat9` to `tomcat` 10.1 (the `tomcat9` compat package is supported only until Nov 2026
+/ RHEL 10.3, and plain `dnf update` cannot cross the boundary — see the KNOWN ISSUE note in
+[`playbooks/patching_idm_serial.yml`](playbooks/patching_idm_serial.yml) for the full incident,
+including the `ipadb.so` / `kdb_function_table` signature when `krb5-server` updates while
+`ipa-server` is pinned).
+
+- [Introducing Apache Tomcat 10.1 in RHEL 10](https://developers.redhat.com/articles/2026/04/23/introducing-apache-tomcat-101-rhel-10)
+  — the Red Hat announcement with the documented transition: `dnf swap tomcat9 tomcat --allowerasing`
+- [Updating IdM packages (RHEL 10 docs)](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/installing_identity_management/update-downgrade-ipa)
+  — the supported IdM update procedure: `dnf upgrade ipa-* 389-ds-*` / `dnf distro-sync ipa-* 389-ds-*`,
+  plus the minor-version stepping rule for IdM upgrades
+
 ## Requirements
 
 ```bash
