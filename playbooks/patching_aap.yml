@@ -10,6 +10,21 @@
 # CLI:
 #   ansible-playbook playbooks/patching_aap.yml \
 #     -e target_host=aap27.lab.example.com
+#
+# KNOWN ISSUE (10 Nov 2026, resolved) — podman 6 (RHEL 10.3) removes slirp4netns:
+#   The 10.3 AppStream ships podman 6.1.0, which dropped the slirp4netns
+#   rootless network stack (pasta is the replacement and the rootless
+#   default). The controller's DEFAULT_CONTAINER_RUN_OPTIONS launched every
+#   EE container with --network slirp4netns:enable_ipv6=true, so after the
+#   patch+reboot every AAP job failed instantly with:
+#     Error: invalid config provided: invalid network "slirp4netns"
+#   Resolution: settings.py now uses --network host (EEs share the host
+#   network namespace — single-tenant lab trade-off). NOTE: plain pasta is
+#   NOT a drop-in here: pasta copies the host's IP into the EE container,
+#   which breaks EE→own-host SSH (the controller can no longer reach
+#   aap27 for self-targeted jobs); pasta's --map-host-loopback/--no-copy-addrs
+#   do not override podman's address management. Full write-up:
+#   docs/incident-el10_3-container-networking.md
 
 - name: AAP controller-host patching with pre/post platform health checks
   hosts: "{{ target_host | mandatory }}"
