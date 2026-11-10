@@ -22,6 +22,23 @@ including the `ipadb.so` / `kdb_function_table` signature when `krb5-server` upd
   — the supported IdM update procedure: `dnf upgrade ipa-* 389-ds-*` / `dnf distro-sync ipa-* 389-ds-*`,
   plus the minor-version stepping rule for IdM upgrades
 
+## Red Hat references — podman 6 / slirp4netns removal (incident 10 Nov 2026)
+
+The 10.3 AppStream shipped podman 6.1.0, which **removed the slirp4netns rootless network
+stack** (pasta is the replacement and the rootless default). The controller's EE launch
+options still referenced it, so every AAP job failed instantly after the patch+reboot.
+Full write-up — root cause, the pasta dead-ends (copied host IP breaks EE→own-host SSH;
+`--map-host-loopback`/`--no-copy-addrs` can't override podman's address management), the
+`--network host` resolution and its trade-off — lives in
+[`docs/incident-el10_3-container-networking.md`](docs/incident-el10_3-container-networking.md).
+
+- [Podman 6.0.0 release notes](https://github.com/podman-container-tools/podman/releases/tag/v6.0.0)
+  — the removal list (slirp4netns, CNI, iptables, cgroups v1)
+- [Considerations in adopting RHEL 10 — Containers](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/considerations_in_adopting_rhel_10/containers)
+  — slirp4netns deprecation, pasta as the rootless default
+- [Communicating among containers (RHEL 10)](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/building_running_and_managing_containers/communicating-among-containers)
+  — network modes and the pasta vs slirp4netns differences
+
 ## Requirements
 
 ```bash
