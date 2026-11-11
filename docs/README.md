@@ -173,7 +173,7 @@ the host on the network (cleaner for source-IP-sensitive services), but lose the
 "gateway = host" escape hatch slirp4netns provided — which is what forced the
 `--network host` resolution for the AAP EEs above.
 
-**One-liner for the interview:** *"RHEL 10.3 replaced slirp4netns with pasta — a
+**Summary:** *"RHEL 10.3 replaced slirp4netns with pasta — a
 from-scratch, seccomp-hardened user-mode network stack that gives rootless containers the
 host's own network identity instead of NAT — faster, IPv6-correct, source-IP-preserving,
 and shared with the confidential-computing stack. The migration cost us: the copied-IP
