@@ -107,3 +107,75 @@ moved to Tomcat 10.1) and removed slirp4netns (podman 6). Hosts relying on eithe
 break at the boundary, and plain `dnf update` cannot cross it. After any minor-version
 jump: sweep for removed-stack references *before* trusting the next scheduled run (the
 sweep command above), and expect the fix to be a documented **swap/migration**, not a flag.
+
+## Background — what is pasta, and why RHEL switched
+
+**pasta** is the namespace-side counterpart of **passt** ("**P**lug **A** **S**imple
+**S**ocket **T**ransport") — a user-mode networking daemon written from scratch by the same
+ecosystem that maintained `slirp4netns`. Two programs, one design:
+
+- **passt** — connects a *virtual machine* to the network: a full TCP/IP, UDP and ICMP stack
+  implemented **in user space**, bridging a VM's interface to plain host sockets. No bridge,
+  no root, no host-side TUN.
+- **pasta** — the same engine for *containers/namespaces*: it "patches" a network namespace
+  into the host's network, and is what podman now uses for **all rootless container
+  networking**.
+
+The architectural idea: instead of kernel networking primitives that need privilege
+(bridges, routed veth pairs, NAT rules), the container gets a **tap interface connected to
+the pasta process over sockets**, and pasta speaks real TCP/IP on the host's behalf with
+ordinary unprivileged sockets — a deliberately tiny code base with no dynamic allocation
+after startup and heavy seccomp filtering.
+
+**How it differs from slirp4netns** — slirp4netns was 1990s QEMU `libslirp` code adapted
+for containers: a NAT box giving containers a private `10.0.2.x` space, hidden behind the
+host. pasta throws that model away (per the
+[RHEL 10 networking docs](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/building_running_and_managing_containers/communicating-among-containers)):
+
+| | slirp4netns | pasta |
+|---|---|---|
+| Address model | Fixed private `10.0.2.15`, NAT'd out | **Copies the host's IP address and routes** into the container |
+| Outbound appearance | Source-NAT'd, origin hidden | Traffic appears to come **from the host's own IP** — the container shares the host's network identity |
+| IPv6 | Weak/awkward | **First-class** — RA/SLAAC handled, IPv6 port forwarding |
+| Port forwarding | Complex, loses source IP | Preserves the **original client source IP** |
+| Performance | The long-standing complaint | Substantially faster, designed around efficient socket handling |
+| Security posture | Old code base, larger surface | Written for confidential computing: minimal, sandboxed, hardened |
+
+Row one is the one that bit this lab: **because pasta copies the host's IP, a rootless
+container literally holds the host's address** — so a connection from the container to "the
+host's IP" is, from the container's routing perspective, a connection to *itself*. That is
+why the EE containers could not SSH back to their own controller after the migration, and
+why no pasta flag could remap it: the container's kernel resolves that address locally
+before pasta ever sees the packet.
+
+**Why Red Hat switched — the timeline was staged, not sudden:**
+
+1. **RHEL 9.2** (podman 4.4.1) — pasta appears as an *option*
+2. **RHEL 9.5** — pasta becomes the **default** for rootless containers
+3. **RHEL 10.0** — slirp4netns formally **deprecated** ("removed in a future major release")
+4. **RHEL 10.3** (podman 6.1) — slirp4netns support **removed**; pasta is the only path
+
+The reasons behind it:
+
+- **slirp4netns is end-of-life upstream** — its maintainer lineage moved to passt; shipping
+  a dying user-space stack conflicts with Red Hat's maintenance obligations (identical
+  pattern to the `tomcat9` compat package: a deprecation clock, with 10.3 as the deadline)
+- **Performance** — rootless container networking was a known bottleneck; pasta fixes
+  throughput and latency without root
+- **Security / Confidential Computing** — passt is the network backend for confidential VM
+  workloads (Kata et al.): minimal, seccomp-sandboxed, allocation-free — one hardened stack
+  serving containers *and* confidential VMs instead of maintaining two
+- **Correctness** — IPv6, source-IP-preserving forwarding, and the shared-host-identity
+  model solve limitations slirp4netns could never fix architecturally
+
+**The cost of the new model** is the address-copying edge: containers present themselves as
+the host on the network (cleaner for source-IP-sensitive services), but lose the fixed
+"gateway = host" escape hatch slirp4netns provided — which is what forced the
+`--network host` resolution for the AAP EEs above.
+
+**One-liner for the interview:** *"RHEL 10.3 replaced slirp4netns with pasta — a
+from-scratch, seccomp-hardened user-mode network stack that gives rootless containers the
+host's own network identity instead of NAT — faster, IPv6-correct, source-IP-preserving,
+and shared with the confidential-computing stack. The migration cost us: the copied-IP
+model breaks container-to-own-host connections, which slirp4netns's NAT model used to
+allow."*
