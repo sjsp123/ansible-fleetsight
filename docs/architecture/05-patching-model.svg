@@ -1,0 +1,71 @@
+<svg viewBox="0 0 720 400" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>Patching model: three tiered strategies - standard fleet hosts (batched, auto-reboot), IdM servers (serial with service verification), and the AAP controller (health-gated, no auto-reboot) - all appending patching history on the collector.</title>
+<desc>Three lanes, one per patching class. Standard fleet hosts patch in batches and auto-reboot when required. IdM servers patch one master at a time with a 3600-second return window and post-reboot verification of directory, Kerberos and CA services. The AAP controller patches without auto-reboot by policy, gated by pre- and post-health checks of its container roster. Every lane appends a record to the patching history CSV on the collector via the log_collector delegation pattern.</desc>
+<rect width="100%" height="100%" fill="#F7F6F2"/>
+
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="#B9B6AE" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<!-- Content source -->
+<rect x="180" y="24" width="360" height="46" rx="6" fill="#EFF7F7" stroke="#01696F" stroke-width="0.75"/>
+<text x="360" y="44" text-anchor="middle" font-size="12" font-weight="600" fill="#01696F" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">Satellite 6.19 — content source</text>
+<text x="360" y="60" text-anchor="middle" font-size="10" fill="#7A7974" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">register_fleet.yml — Global Registration (repeatable)</text>
+
+<line x1="300" y1="72" x2="122" y2="108" stroke="#B9B6AE" stroke-width="1" marker-end="url(#arrow)"/>
+<line x1="360" y1="72" x2="360" y2="108" stroke="#B9B6AE" stroke-width="1" marker-end="url(#arrow)"/>
+<line x1="420" y1="72" x2="598" y2="108" stroke="#B9B6AE" stroke-width="1" marker-end="url(#arrow)"/>
+
+<!-- Lane A: standard fleet hosts -->
+<rect x="20" y="112" width="200" height="180" rx="6" fill="#F9F8F5" stroke="#D4D1CA" stroke-width="0.5"/>
+<text x="36" y="134" font-size="12" font-weight="600" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">Standard fleet hosts</text>
+<text x="36" y="150" font-size="10" fill="#7A7974" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">system_update.yml</text>
+
+<circle cx="42" cy="176" r="3.5" fill="#01696F"/>
+<text x="54" y="180" font-size="11" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">dnf patch — batched rollout</text>
+<circle cx="42" cy="204" r="3.5" fill="#01696F"/>
+<text x="54" y="208" font-size="11" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">auto-reboot when required</text>
+<circle cx="42" cy="232" r="3.5" fill="#01696F"/>
+<text x="54" y="236" font-size="11" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">inventory-order serial groups</text>
+<text x="54" y="250" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">(-e target_hosts, --limit previews)</text>
+
+<!-- Lane B: IdM servers (serial) -->
+<rect x="260" y="112" width="200" height="180" rx="6" fill="#EFF7F7" stroke="#01696F" stroke-width="0.75"/>
+<text x="276" y="134" font-size="12" font-weight="600" fill="#01696F" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">IdM servers (serial)</text>
+<text x="276" y="150" font-size="10" fill="#7A7974" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">patching_idm_serial.yml</text>
+
+<circle cx="282" cy="176" r="3.5" fill="#01696F"/>
+<text x="294" y="180" font-size="11" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">one master at a time</text>
+<circle cx="282" cy="204" r="3.5" fill="#01696F"/>
+<text x="294" y="208" font-size="11" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">patch + reboot</text>
+<text x="294" y="224" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">3600s return window</text>
+<circle cx="282" cy="248" r="3.5" fill="#01696F"/>
+<text x="294" y="252" font-size="11" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">verify: dirsrv · krb5 · CA settle</text>
+<text x="294" y="266" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">(services take minutes, not seconds)</text>
+
+<!-- Lane C: AAP controller -->
+<rect x="500" y="112" width="200" height="180" rx="6" fill="#F9F8F5" stroke="#D4D1CA" stroke-width="0.5"/>
+<text x="516" y="134" font-size="12" font-weight="600" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">AAP controller</text>
+<text x="516" y="150" font-size="10" fill="#7A7974" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">patching_aap.yml</text>
+
+<circle cx="522" cy="176" r="3.5" fill="#01696F"/>
+<text x="534" y="180" font-size="11" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">pre gate: container roster</text>
+<circle cx="522" cy="204" r="3.5" fill="#964219"/>
+<text x="534" y="208" font-size="11" fill="#964219" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">patch — no auto-reboot</text>
+<text x="534" y="224" font-size="10" fill="#7A7974" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">(policy: protect the running job)</text>
+<circle cx="522" cy="248" r="3.5" fill="#01696F"/>
+<text x="534" y="252" font-size="11" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">post gate: platform checks</text>
+<text x="534" y="266" font-size="10" fill="#BAB9B4" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">needs-restarting - manual bounce</text>
+
+<!-- History feed -->
+<line x1="120" y1="294" x2="120" y2="314" stroke="#B9B6AE" stroke-width="1" marker-end="url(#arrow)"/>
+<line x1="360" y1="294" x2="360" y2="314" stroke="#B9B6AE" stroke-width="1" marker-end="url(#arrow)"/>
+<line x1="600" y1="294" x2="600" y2="314" stroke="#B9B6AE" stroke-width="1" marker-end="url(#arrow)"/>
+
+<rect x="20" y="318" width="680" height="62" rx="6" fill="#EFF7F7" stroke="#01696F" stroke-width="0.75"/>
+<text x="40" y="340" font-size="12" font-weight="600" fill="#01696F" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">patching_history</text>
+<text x="40" y="358" font-size="11" fill="#28251D" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">appended on the collector via the log_collector delegation pattern — every patch run, every lane, one record each</text>
+<text x="40" y="374" font-size="11" fill="#7A7974" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">-> /linuxdb/patching/ansible_patching_history.csv (Hostname, Date, Installed, Updated, Removed)</text>
+</svg>

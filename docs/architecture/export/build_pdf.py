@@ -206,6 +206,21 @@ def build():
     ))
     story.append(PageBreak())
 
+    # ---- Diagram 5 ----
+    story.extend(diagram_page(
+        "5. Patching Model \u2014 Three Tiered Strategies",
+        "One content source (Satellite 6.19, registered via register_fleet.yml), three patching strategies matched to "
+        "the risk profile of each host class, all feeding a shared patching history on the collector.",
+        "05-patching-model.png",
+        [
+            "Standard fleet hosts: batched dnf patching in inventory-order serial groups, auto-reboot when required.",
+            "IdM servers: one master at a time, a 3600-second return window, and post-reboot verification of directory, Kerberos and CA services.",
+            "AAP controller: no auto-reboot by policy (a reboot would kill the running job), gated by pre/post platform health checks.",
+            "Every lane appends its run to /linuxdb/patching/ansible_patching_history.csv via the log_collector delegation pattern.",
+        ],
+    ))
+    story.append(PageBreak())
+
     # ---- Playbook table ----
     story.append(Paragraph("Operational Playbook Reference", styles["SectionTitle"]))
     story.append(Paragraph(

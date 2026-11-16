@@ -3,7 +3,7 @@
 Regenerates the high-resolution PNG diagrams used by build_pdf.py and
 build_pptx.js from the SVG sources in the parent docs/architecture/ folder.
 
-Run this after editing any of the four architecture SVGs, then re-run
+Run this after editing any of the five architecture SVGs, then re-run
 build_pdf.py / build_pptx.js to refresh the exported documents.
 
 Usage (from anywhere, after `pip install cairosvg`):
@@ -21,6 +21,7 @@ DIAGRAMS = [
     "02-log-collector-pipelines",
     "03-centralized-logging-role-order",
     "04-linuxdb-dashboard-role-order",
+    "05-patching-model",
 ]
 
 
