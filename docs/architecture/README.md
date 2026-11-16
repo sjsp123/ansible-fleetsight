@@ -51,6 +51,19 @@ didn't make it into `log_db`.
 `linuxdb_dashboard` role on `log_collector`, which reads all three data
 sources to serve port 8082.
 
+## 5. Patching model — three tiered strategies
+
+![Patching model](05-patching-model.svg)
+
+One content source (Satellite 6.19, registered via `register_fleet.yml`), three
+patching strategies matched to the risk profile of each host class: standard
+fleet hosts take batched `dnf` patching with auto-reboot; the IdM servers patch
+one master at a time with a long return window and post-reboot verification of
+directory, Kerberos and CA services; the AAP controller patches without
+auto-reboot (a reboot would kill the running job) behind pre/post platform
+health gates. Every lane appends its run to the patching history CSV on the
+collector via the `log_collector` delegation pattern.
+
 ## Utility / ad-hoc playbooks (not part of either pipeline)
 
 | Playbook | Role(s) invoked | Runs against |
