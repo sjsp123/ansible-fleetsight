@@ -18,3 +18,7 @@ group_vars/*/site_hosts.yml
 .pytest_cache/
 .DS_Store
 **/.DS_Store
+
+# Architecture export build artifacts (not committed):
+docs/architecture/export/fonts/
+docs/architecture/export/node_modules/

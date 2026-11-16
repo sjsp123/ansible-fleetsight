@@ -220,7 +220,7 @@ def build():
         ["idm_healthcheck", "Validates identity realm services and replication health", "idm"],
         ["system_update / update_system", "Applies patches through the package manager, with pre/post checks", "all / fleet-wide"],
         ["system_poweroff / poweroff_all", "Controlled shutdown of a single host or the full fleet", "targeted / all"],
-        ["silence_setroubleshoot", "Suppresses noisy SELinux troubleshooting notifications", "log_clients"],
+        ["silence_setroubleshoot", "Suppresses noisy SELinux troubleshooting notifications", "homelab / lab groups"],
         ["sudo_audit_report", "Reports on sudo usage and privilege escalation events", "all"],
         ["dnf_history", "Captures package transaction history for audit purposes", "all"],
         ["gather_critical_alerts", "Collects and summarizes critical alert conditions fleet-wide", "log_collector"],
@@ -229,6 +229,10 @@ def build():
         ["idm_copy_gssapi_delegation", "Applies GSSAPI delegation configuration for identity-aware services", "idm"],
         ["push_script_and_run", "Ad hoc utility to push and execute a script across target hosts", "variable"],
         ["lineage", "Diagnostic playbook to identify why a service or process is active", "targeted"],
+        ["patching_aap", "Patches the AAP controller host with pre/post platform health gates (no auto-reboot by policy)", "aap_servers"],
+        ["patching_idm_serial", "Serial IdM patching with post-reboot service verification; appends patching history on the collector", "idm (serial)"],
+        ["register_fleet", "Bulk-registers hosts to a Satellite 6.19 server via Global Registration", "targeted group"],
+        ["standardise_dns", "Makes the fleet resolver configuration declarative (IdM primary on lab links, public fallback elsewhere)", "all"],
     ]
 
     table_data = [[Paragraph(rows[0][0], styles["TableHeader"]), Paragraph(rows[0][1], styles["TableHeader"]), Paragraph(rows[0][2], styles["TableHeader"])]]
